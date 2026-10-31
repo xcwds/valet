@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/xcwds/valet/internal/secrets"
 )
 
 type syncBuffer struct {
@@ -26,6 +28,24 @@ func (b *syncBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// testKey is a master key generated per test binary run.
+var testKey = func() string {
+	k, err := secrets.NewMasterKey()
+	if err != nil {
+		panic(err)
+	}
+	return k
+}()
+
+// keyEnv supplies the master key the way an operator would, through
+// $VALET_MASTER_KEY.
+func keyEnv(k string) string {
+	if k == secrets.DefaultKeyEnv {
+		return testKey
+	}
+	return ""
 }
 
 func writeFile(t *testing.T, body string) string {
@@ -53,7 +73,7 @@ func TestValetdStartsAndStopsOnSignal(t *testing.T) {
 	var stdout, stderr syncBuffer
 	done := make(chan int, 1)
 	go func() {
-		done <- Run(ctx, []string{"valetd", "--config", path}, IO{Stdout: &stdout, Stderr: &stderr, Getenv: func(string) string { return "" }})
+		done <- Run(ctx, []string{"valetd", "--config", path}, IO{Stdout: &stdout, Stderr: &stderr, Getenv: keyEnv})
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -127,7 +147,7 @@ func TestValetdCreatesTheDatabase(t *testing.T) {
 	var stdout, stderr syncBuffer
 	done := make(chan int, 1)
 	go func() {
-		done <- Run(ctx, []string{"valetd", "--config", path}, IO{Stdout: &stdout, Stderr: &stderr, Getenv: func(string) string { return "" }})
+		done <- Run(ctx, []string{"valetd", "--config", path}, IO{Stdout: &stdout, Stderr: &stderr, Getenv: keyEnv})
 	}()
 	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(stdout.String(), `"msg":"started"`) {
@@ -149,11 +169,106 @@ func TestValetdCreatesTheDatabase(t *testing.T) {
 func TestValetdRefusesAnUnusableDataDir(t *testing.T) {
 	notADir := writeFile(t, "") // a file where the data directory should be
 	path := writeFile(t, "data_dir: "+notADir+"\nlisten: {admin: '127.0.0.1:0', agent: '127.0.0.1:0', egress: '127.0.0.1:0'}\n")
-	code, stdout, stderr := run(t, context.Background(), nil, "valetd", "--config", path)
+	code, stdout, stderr := run(t, context.Background(), map[string]string{secrets.DefaultKeyEnv: testKey}, "valetd", "--config", path)
 	if code != ExitError || !strings.Contains(stderr, "store:") {
 		t.Fatalf("code %d, stderr %q; want a store error", code, stderr)
 	}
 	if strings.Contains(stdout, "started") {
 		t.Errorf("listeners started before the database opened: %q", stdout)
+	}
+}
+
+func TestValetdNeedsAMasterKey(t *testing.T) {
+	path := writeFile(t, loopbackConfig(t))
+	code, stdout, stderr := run(t, context.Background(), nil, "valetd", "--config", path)
+	if code != ExitError || !strings.Contains(stderr, "no master key") || !strings.Contains(stderr, "init-key") {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("started without a key: %q", stdout)
+	}
+}
+
+// runUntilStarted starts valetd with env and stops it once it has started,
+// returning the exit code and stderr.
+func runUntilStarted(t *testing.T, path string, env map[string]string) (int, string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var stdout, stderr syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, []string{"valetd", "--config", path}, IO{Stdout: &stdout, Stderr: &stderr, Getenv: func(k string) string { return env[k] }})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		select {
+		case code := <-done:
+			return code, stderr.String()
+		default:
+		}
+		if strings.Contains(stdout.String(), `"msg":"started"`) {
+			cancel()
+			return <-done, stderr.String()
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("valetd neither started nor exited; stderr %q", stderr.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestValetdRefusesADifferentKeyOnRestart(t *testing.T) {
+	path := writeFile(t, loopbackConfig(t))
+	if code, stderr := runUntilStarted(t, path, map[string]string{secrets.DefaultKeyEnv: testKey}); code != ExitOK {
+		t.Fatalf("first start: %d %q", code, stderr)
+	}
+	other, _ := secrets.NewMasterKey()
+	code, stderr := runUntilStarted(t, path, map[string]string{secrets.DefaultKeyEnv: other})
+	if code != ExitError || !strings.Contains(stderr, "does not match this database") {
+		t.Fatalf("code %d, stderr %q; want the other key refused", code, stderr)
+	}
+	if code, stderr := runUntilStarted(t, path, map[string]string{secrets.DefaultKeyEnv: testKey}); code != ExitOK {
+		t.Fatalf("restart with the right key: %d %q", code, stderr)
+	}
+}
+
+func TestValetdKeyFromFile(t *testing.T) {
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	if code, _, stderr := run(t, context.Background(), nil, "valet", "secrets", "init-key", "--out", keyFile); code != ExitOK {
+		t.Fatalf("init-key: %q", stderr)
+	}
+	path := writeFile(t, loopbackConfig(t)+"master_key: {file: "+keyFile+"}\n")
+	if code, stderr := runUntilStarted(t, path, nil); code != ExitOK {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+}
+
+func TestValetdUnsetsTheKeyVariable(t *testing.T) {
+	path := writeFile(t, loopbackConfig(t))
+	env := map[string]string{secrets.DefaultKeyEnv: testKey}
+	var unset []string
+	ctx, cancel := context.WithCancel(context.Background())
+	var stdout, stderr syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, []string{"valetd", "--config", path}, IO{
+			Stdout: &stdout, Stderr: &stderr,
+			Getenv:   func(k string) string { return env[k] },
+			Unsetenv: func(k string) error { unset = append(unset, k); return nil },
+		})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(stdout.String(), `"msg":"started"`) {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("did not start: %q", stderr.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if len(unset) != 1 || unset[0] != secrets.DefaultKeyEnv {
+		t.Fatalf("unset = %v, want [%s]", unset, secrets.DefaultKeyEnv)
 	}
 }

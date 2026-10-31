@@ -23,3 +23,4 @@ coverage.*
 
 # Local config
 /valet.yaml
+/master.key

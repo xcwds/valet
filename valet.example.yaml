@@ -16,10 +16,14 @@ listen:
   egress: :14402
 
 # Where the secret store's master key comes from: a file (such as a Docker
-# secret) or the name of an environment variable; never the key itself.
+# secret) or the name of an environment variable; never the key itself. With
+# neither set, valetd reads $VALET_MASTER_KEY. Prefer a file: an environment
+# variable stays visible in /proc/<pid>/environ to the same user and root. Generate a key with
+# `valet secrets init-key --out FILE`, and keep a backup: without it, stored
+# secrets can't be decrypted, and valetd refuses a different key.
 master_key:
   file: /run/secrets/master_key # (VALET_MASTER_KEY_FILE)
-  # env: VALET_MASTER_KEY        # (VALET_MASTER_KEY_ENV)
+  # env: MY_KEY_VARIABLE         # (VALET_MASTER_KEY_ENV)
 
 log:
   level: info # debug, info, warn or error (VALET_LOG_LEVEL)

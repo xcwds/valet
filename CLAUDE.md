@@ -22,7 +22,8 @@ Go, one module (`github.com/xcwds/valet`), one static binary built from `cmd/val
 - Deny by default (RFC decision 5): a missing rule, an unknown action, a parse error or a timeout
   denies, and the denial is audited (decision 6). Never fail open.
 - Upstream credentials never leave Valet (decision 1): not in responses, errors, logs or audit
-  params. Redact before logging.
+  params. Carry them as `secrets.Secret` (prints as `[redacted]`) and call `Reveal()` only at the
+  point of use.
 - Code paths stay descriptive (`internal/policy`); the Greek names (Themis, Ariadne, …) appear in
   docs, UI and log prefixes only (decision 15).
 - Schema changes are new numbered files in `internal/store/migrations/`, forward-only. Never edit

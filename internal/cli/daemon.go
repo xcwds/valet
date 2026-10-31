@@ -8,6 +8,7 @@ import (
 	"github.com/xcwds/valet/internal/config"
 	"github.com/xcwds/valet/internal/daemon"
 	"github.com/xcwds/valet/internal/logging"
+	"github.com/xcwds/valet/internal/secrets"
 	"github.com/xcwds/valet/internal/store"
 )
 
@@ -39,6 +40,23 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	level, _ := config.ParseLevel(cfg.Log.Level) // validated by Load
 	log := logging.New(sys.Stdout, cfg.Log.Format, level)
 
+	// The master key comes first: a missing or malformed key fails before
+	// the data directory is touched.
+	masterKey, err := secrets.LoadMasterKey(cfg.MasterKey.File, cfg.MasterKey.Env, sys.Getenv)
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	// Drop the key from the environment so nothing valetd starts inherits it.
+	// (Linux's /proc/<pid>/environ still shows the environment valetd was
+	// started with, readable by the same user and root; a key file avoids
+	// that, which is why the docs prefer master_key.file.)
+	if name := secrets.KeyEnvName(cfg.MasterKey.File, cfg.MasterKey.Env); name != "" {
+		if sys.Unsetenv != nil {
+			_ = sys.Unsetenv(name)
+		}
+	}
+
 	st, err := store.Open(ctx, cfg.DataDir)
 	if err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
@@ -49,6 +67,14 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 			log.Error("closing the database", "err", err)
 		}
 	}()
+
+	// Hekate: proves the key matches this database before anything runs.
+	// Connectors (#10) get the store from here.
+	if _, err := secrets.Open(ctx, st, masterKey); err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	logging.For(log, logging.Hekate).Info("master key verified", "key_id", masterKey.ID())
 
 	if err := daemon.Run(ctx, cfg, log, daemon.Options{Health: st.Ping}); err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
