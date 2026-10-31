@@ -93,3 +93,15 @@ func TestLoadMasterKey(t *testing.T) {
 		t.Errorf("file did not win: %v", err)
 	}
 }
+
+func TestKeyEnvName(t *testing.T) {
+	if got := KeyEnvName("/k", "X"); got != "" {
+		t.Errorf("with a file: %q, want none", got)
+	}
+	if got := KeyEnvName("", "X"); got != "X" {
+		t.Errorf("named: %q", got)
+	}
+	if got := KeyEnvName("", ""); got != DefaultKeyEnv {
+		t.Errorf("default: %q", got)
+	}
+}

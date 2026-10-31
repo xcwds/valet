@@ -243,3 +243,32 @@ func TestValetdKeyFromFile(t *testing.T) {
 		t.Fatalf("code %d, stderr %q", code, stderr)
 	}
 }
+
+func TestValetdUnsetsTheKeyVariable(t *testing.T) {
+	path := writeFile(t, loopbackConfig(t))
+	env := map[string]string{secrets.DefaultKeyEnv: testKey}
+	var unset []string
+	ctx, cancel := context.WithCancel(context.Background())
+	var stdout, stderr syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, []string{"valetd", "--config", path}, IO{
+			Stdout: &stdout, Stderr: &stderr,
+			Getenv:   func(k string) string { return env[k] },
+			Unsetenv: func(k string) error { unset = append(unset, k); return nil },
+		})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(stdout.String(), `"msg":"started"`) {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("did not start: %q", stderr.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if len(unset) != 1 || unset[0] != secrets.DefaultKeyEnv {
+		t.Fatalf("unset = %v, want [%s]", unset, secrets.DefaultKeyEnv)
+	}
+}

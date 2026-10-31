@@ -58,6 +58,18 @@ func ParseMasterKey(encoded string) (*MasterKey, error) {
 	return &MasterKey{key: NewSecret(b), id: hex.EncodeToString(mac.Sum(nil))[:16]}, nil
 }
 
+// KeyEnvName is the environment variable LoadMasterKey reads when no file is
+// set, so the caller can unset it once the key is loaded.
+func KeyEnvName(file, env string) string {
+	if file != "" {
+		return ""
+	}
+	if env == "" {
+		return DefaultKeyEnv
+	}
+	return env
+}
+
 // LoadMasterKey reads the master key from file if set, otherwise from the
 // environment variable env (DefaultKeyEnv when empty).
 func LoadMasterKey(file, env string, getenv func(string) string) (*MasterKey, error) {
@@ -72,9 +84,7 @@ func LoadMasterKey(file, env string, getenv func(string) string) (*MasterKey, er
 		}
 		return k, nil
 	}
-	if env == "" {
-		env = DefaultKeyEnv
-	}
+	env = KeyEnvName(file, env)
 	v := getenv(env)
 	if v == "" {
 		return nil, fmt.Errorf("no master key: set master_key.file, or put a key in $%s (generate one with: valet secrets init-key)", env)

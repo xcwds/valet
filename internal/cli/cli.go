@@ -30,6 +30,9 @@ type Env func(string) string
 type IO struct {
 	Stdout, Stderr io.Writer
 	Getenv         Env
+	// Unsetenv removes a variable from the process environment (os.Unsetenv
+	// in production; tests may leave it nil).
+	Unsetenv func(string) error
 }
 
 // Run executes the command line args (args[0] is the program name) and

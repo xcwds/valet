@@ -47,6 +47,15 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
 	}
+	// Drop the key from the environment so nothing valetd starts inherits it.
+	// (Linux's /proc/<pid>/environ still shows the environment valetd was
+	// started with, readable by the same user and root; a key file avoids
+	// that, which is why the docs prefer master_key.file.)
+	if name := secrets.KeyEnvName(cfg.MasterKey.File, cfg.MasterKey.Env); name != "" {
+		if sys.Unsetenv != nil {
+			_ = sys.Unsetenv(name)
+		}
+	}
 
 	st, err := store.Open(ctx, cfg.DataDir)
 	if err != nil {
