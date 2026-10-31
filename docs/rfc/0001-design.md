@@ -58,8 +58,8 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
 14. **Go, one static binary, one image, SQLite by default** (see [Tech stack](#tech-stack)).
 15. **Myth names in docs, plain names in code.** Components carry Greek-myth names in docs, UI and
     log prefixes; code paths stay descriptive (see [Naming](#naming)).
-16. **Apache-2.0.** Its explicit patent grant suits infrastructure, and it matches the Go ecosystem
-    Valet builds on (cel-go, go-github, the MCP Go SDK).
+16. **Apache-2.0.** Permissive, with an explicit patent grant, as is usual for Go infrastructure
+    (Kubernetes, cel-go). Valet's permissively licensed dependencies are compatible with it.
 
 ## Naming
 
