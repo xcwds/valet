@@ -37,16 +37,18 @@ func writeFile(t *testing.T, body string) string {
 	return path
 }
 
-const loopbackConfig = `
-data_dir: /unused
+func loopbackConfig(t *testing.T) string {
+	t.Helper()
+	return "data_dir: " + filepath.Join(t.TempDir(), "data") + `
 listen:
   admin: 127.0.0.1:0
   agent: 127.0.0.1:0
   egress: 127.0.0.1:0
 `
+}
 
 func TestValetdStartsAndStopsOnSignal(t *testing.T) {
-	path := writeFile(t, loopbackConfig)
+	path := writeFile(t, loopbackConfig(t))
 	ctx, cancel := context.WithCancel(context.Background())
 	var stdout, stderr syncBuffer
 	done := make(chan int, 1)
@@ -115,5 +117,43 @@ func TestValetdFlags(t *testing.T) {
 	code, _, stderr := run(t, context.Background(), nil, "valetd", "-h")
 	if code != ExitOK || !strings.Contains(stderr, "VALET_DATA_DIR") {
 		t.Errorf("-h: code %d, stderr %q; want usage listing env overrides", code, stderr)
+	}
+}
+
+func TestValetdCreatesTheDatabase(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	path := writeFile(t, "data_dir: "+dataDir+"\nlisten: {admin: '127.0.0.1:0', agent: '127.0.0.1:0', egress: '127.0.0.1:0'}\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	var stdout, stderr syncBuffer
+	done := make(chan int, 1)
+	go func() {
+		done <- Run(ctx, []string{"valetd", "--config", path}, IO{Stdout: &stdout, Stderr: &stderr, Getenv: func(string) string { return "" }})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(stdout.String(), `"msg":"started"`) {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("valetd did not start; stderr %q", stderr.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if code := <-done; code != ExitOK {
+		t.Fatalf("exit %d, stderr %q", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "valet.db")); err != nil {
+		t.Fatalf("database not created: %v", err)
+	}
+}
+
+func TestValetdRefusesAnUnusableDataDir(t *testing.T) {
+	notADir := writeFile(t, "") // a file where the data directory should be
+	path := writeFile(t, "data_dir: "+notADir+"\nlisten: {admin: '127.0.0.1:0', agent: '127.0.0.1:0', egress: '127.0.0.1:0'}\n")
+	code, stdout, stderr := run(t, context.Background(), nil, "valetd", "--config", path)
+	if code != ExitError || !strings.Contains(stderr, "store:") {
+		t.Fatalf("code %d, stderr %q; want a store error", code, stderr)
+	}
+	if strings.Contains(stdout, "started") {
+		t.Errorf("listeners started before the database opened: %q", stdout)
 	}
 }

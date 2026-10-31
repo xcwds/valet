@@ -25,6 +25,8 @@ Go, one module (`github.com/xcwds/valet`), one static binary built from `cmd/val
   params. Redact before logging.
 - Code paths stay descriptive (`internal/policy`); the Greek names (Themis, Ariadne, …) appear in
   docs, UI and log prefixes only (decision 15).
+- Schema changes are new numbered files in `internal/store/migrations/`, forward-only. Never edit
+  an applied migration: valetd refuses to start when one changed.
 - Never phone home: no telemetry and no network calls except to upstreams a connector or the
   operator's config declares.
 - Always open a PR against `main` linking the issues it closes (write "Closes #n" for each one).

@@ -30,23 +30,32 @@ type Addrs struct {
 	Admin, Agent, Egress string
 }
 
+// Options are Run's optional hooks.
+type Options struct {
+	// Ready is called with the bound addresses once every listener is up.
+	Ready func(Addrs)
+	// Health reports whether valetd's dependencies (the database) work;
+	// /healthz answers 503 while it returns an error.
+	Health func(context.Context) error
+}
+
 type listener struct {
 	name string
 	ln   net.Listener
 	srv  *http.Server
 }
 
-// Run binds every listener, calls ready (if not nil) with their addresses,
+// Run binds every listener, calls opts.Ready (if set) with their addresses,
 // and serves until ctx is canceled or a listener fails. It then shuts all
 // listeners down gracefully. It returns nil after a clean, requested stop.
-func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, ready func(Addrs)) error {
+func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options) error {
 	log = logging.For(log, logging.Valetd)
 
 	specs := []struct {
 		name, addr string
 		srv        *http.Server
 	}{
-		{"admin", cfg.Listen.Admin, adminServer()},
+		{"admin", cfg.Listen.Admin, adminServer(opts.Health, log)},
 		{"agent", cfg.Listen.Agent, agentServer()},
 		{"egress", cfg.Listen.Egress, egressServer()},
 	}
@@ -77,8 +86,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, ready func(A
 
 	addrs := Addrs{Admin: lns[0].ln.Addr().String(), Agent: lns[1].ln.Addr().String(), Egress: lns[2].ln.Addr().String()}
 	log.Info("started", "version", version.String(), "admin", addrs.Admin, "agent", addrs.Agent, "egress", addrs.Egress)
-	if ready != nil {
-		ready(addrs)
+	if opts.Ready != nil {
+		opts.Ready(addrs)
 	}
 
 	errc := make(chan error, len(lns))
@@ -117,12 +126,26 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, ready func(A
 // testAdminHandler, when set by a test, replaces the admin routes.
 var testAdminHandler http.Handler
 
+// healthTimeout bounds the dependency check behind /healthz.
+const healthTimeout = 2 * time.Second
+
 // adminServer serves the operator API. For now: /healthz.
-func adminServer() *http.Server {
+func adminServer(health func(context.Context) error, log *slog.Logger) *http.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		status, code := "ok", http.StatusOK
+		if health != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), healthTimeout)
+			defer cancel()
+			if err := health(ctx); err != nil {
+				// The detail goes to the log, not to the client.
+				log.Error("health check failed", "err", err)
+				status, code = "unhealthy", http.StatusServiceUnavailable
+			}
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": version.String()})
+		w.WriteHeader(code)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": status, "version": version.String()})
 	})
 	var h http.Handler = mux
 	if testAdminHandler != nil {

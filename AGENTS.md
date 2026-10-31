@@ -29,6 +29,12 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   the example.
 - `internal/daemon`: valetd's three listeners (admin, agent, egress), each its own `http.Server`.
   Agent and egress refuse every request (403) until their components land.
+- `internal/store`: the SQLite database (`modernc.org/sqlite`, no cgo) in `data_dir/valet.db`.
+  `Store.Write(ctx, fn)` runs `fn` in a `BEGIN IMMEDIATE` transaction on the single writer
+  connection; `Store.Read()` is a read-only pool. Migrations are embedded from
+  `internal/store/migrations/NNNN_name.sql`, numbered without gaps, each applied in its own
+  transaction and recorded with a SHA-256 in `schema_migrations`. The data directory must be 0700
+  and the database 0600; valetd refuses looser modes rather than fixing them silently.
 - `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with
