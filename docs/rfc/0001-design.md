@@ -66,7 +66,8 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
 17. **The agent may read its own session token.** It only grants access to Valet, under the job's
     policy. Hiding it inside the container would suggest that credentials can be kept safe in an
     agent's container, which this design deliberately doesn't rely on; keeping them out is the
-    point.
+    point. A token the agent leaks is the threat model's residual risk, bounded by TTL and
+    revocation (decision 11).
 
 ## Naming
 
