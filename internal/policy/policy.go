@@ -285,13 +285,8 @@ func (p *Policy) Decide(ctx context.Context, req pipeline.Request) (pipeline.Dec
 			ID: req.Job.ID, Role: req.Job.Role, Repos: append([]string{}, req.Job.Repos()...),
 			BranchPattern: req.Job.BranchPattern, CreatedBy: req.Job.CreatedBy, ExpiresAt: req.Job.ExpiresAt,
 		},
-		"action": Action{Name: req.Action, Connector: req.Spec.Name, Risk: string(req.Spec.Risk), Interface: req.Interface},
+		"action": Action{Name: req.Action, Connector: connectorOf(req.Action), Risk: string(req.Spec.Risk), Interface: req.Interface},
 		"params": celValue(req.Params),
-	}
-	if i := strings.IndexByte(req.Action, '.'); i > 0 {
-		a := vars["action"].(Action)
-		a.Connector = req.Action[:i]
-		vars["action"] = a
 	}
 	for _, ru := range r.rules {
 		if !ru.match.MatchString(req.Action) {
@@ -302,7 +297,9 @@ func (p *Policy) Decide(ctx context.Context, req pipeline.Request) (pipeline.Dec
 			if err != nil {
 				// Fail closed: an error in a rule that applies is a deny,
 				// never a fall-through to a later, more permissive rule.
-				return pipeline.Decision{Effect: pipeline.Deny, Rule: ru.id, Reason: "condition could not be evaluated: " + err.Error()}, nil
+				// CEL's message can quote params (a regex error quotes the
+				// pattern), so it goes in Detail, which is never audited.
+				return pipeline.Decision{Effect: pipeline.Deny, Rule: ru.id, Reason: "condition could not be evaluated", Detail: err.Error()}, nil
 			}
 			if !matched {
 				continue
@@ -315,6 +312,11 @@ func (p *Policy) Decide(ctx context.Context, req pipeline.Request) (pipeline.Dec
 		return pipeline.Decision{Effect: ru.effect, Rule: ru.id, Reason: reason, Alert: ru.alert}, nil
 	}
 	return pipeline.Decision{Effect: pipeline.Deny, Rule: "default", Reason: fmt.Sprintf("no rule in role %s allows %s", r.name, req.Action)}, nil
+}
+
+func connectorOf(action string) string {
+	c, _, _ := strings.Cut(action, ".")
+	return c
 }
 
 func eval(ctx context.Context, prg cel.Program, vars map[string]any) (bool, error) {

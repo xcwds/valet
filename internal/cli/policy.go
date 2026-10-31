@@ -77,6 +77,9 @@ func policyCmd(ctx context.Context, args []string, sys IO) int {
 		alert = " (alert)"
 	}
 	_, _ = fmt.Fprintf(sys.Stdout, "%s%s\nrule:   %s\nreason: %s\n", strings.ToUpper(d.Effect), alert, d.Rule, d.Reason)
+	if d.Detail != "" {
+		_, _ = fmt.Fprintf(sys.Stdout, "detail: %s\n", d.Detail)
+	}
 	return ExitOK
 }
 

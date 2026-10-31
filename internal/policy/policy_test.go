@@ -263,3 +263,24 @@ func TestDefaultsFileIsValidYAML(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestEvaluationErrorsDoNotQuoteParams(t *testing.T) {
+	p := mustLoad(t, "role: r\nrules:\n  - action: x.a\n    when: params.name.matches(params.pattern)\n    decision: allow\n")
+	d := decide(t, p, job("r"), "x.a", `{"name":"n","pattern":"ghp_SECRET(["}`)
+	if d.Effect != "deny" || d.Reason != "condition could not be evaluated" {
+		t.Fatalf("%+v", d)
+	}
+	if strings.Contains(d.Reason+d.Rule, "SECRET") {
+		t.Error("a param value reached the reason")
+	}
+	if !strings.Contains(d.Detail, "regexp") {
+		t.Errorf("detail = %q, want the CEL error for operators", d.Detail)
+	}
+}
+
+func TestActionVariables(t *testing.T) {
+	p := mustLoad(t, "role: r\nrules:\n  - action: github.**\n    when: action.connector == 'github' && action.name == 'github.pr.read' && action.interface == 'mcp' && action.risk == 'medium'\n    decision: allow\n")
+	if d := decide(t, p, job("r"), "github.pr.read", `{}`); d.Effect != "allow" {
+		t.Errorf("%+v", d)
+	}
+}
