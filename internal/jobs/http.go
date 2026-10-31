@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/xcwds/valet/internal/audit"
+	"github.com/xcwds/valet/internal/throttle"
 )
 
 type principalKey struct{}
@@ -45,8 +47,13 @@ func interfaceFor(r *http.Request) string {
 // PrincipalFrom.
 func (s *Service) RequireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.Authenticate(r.Context(), SessionToken(r), interfaceFor(r))
+		p, err := s.Authenticate(r.Context(), SessionToken(r), interfaceFor(r), throttle.Source(r))
 		if err != nil {
+			if errors.Is(err, ErrThrottled) {
+				w.Header().Set("Retry-After", strconv.Itoa(s.throttle.RetryAfter()))
+				http.Error(w, "too many failed authentications", http.StatusTooManyRequests)
+				return
+			}
 			if errors.Is(err, ErrUnauthenticated) {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="valet", Basic realm="valet"`)
 				http.Error(w, "unauthenticated", http.StatusUnauthorized)

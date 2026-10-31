@@ -21,6 +21,7 @@ import (
 
 	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/store"
+	"github.com/xcwds/valet/internal/throttle"
 	"github.com/xcwds/valet/internal/tokens"
 )
 
@@ -30,17 +31,24 @@ const TokenFile = "admin.token"
 // ErrUnauthenticated covers every way an admin token can fail.
 var ErrUnauthenticated = errors.New("unauthenticated")
 
+// ErrThrottled is returned once a source has failed too often.
+var ErrThrottled = errors.New("too many failed authentications")
+
 // Service manages and checks admin tokens.
 type Service struct {
-	db    *store.Store
-	audit *audit.Log
-	now   func() time.Time
+	db       *store.Store
+	audit    *audit.Log
+	throttle *throttle.Throttle
+	now      func() time.Time
 }
 
 // NewService returns a Service.
 func NewService(db *store.Store, log *audit.Log) *Service {
-	return &Service{db: db, audit: log, now: time.Now}
+	return &Service{db: db, audit: log, throttle: throttle.New(throttle.DefaultLimit, throttle.DefaultWindow), now: time.Now}
 }
+
+// RetryAfter is the Retry-After seconds for a throttled request.
+func (s *Service) RetryAfter() int { return s.throttle.RetryAfter() }
 
 func newID() (string, error) {
 	b := make([]byte, 10)
@@ -136,9 +144,9 @@ func writeExclusive(path string, b []byte) error {
 	return f.Close()
 }
 
-// Authenticate checks an admin token and returns the token's name. Every
-// failure returns ErrUnauthenticated and is audited with the reason.
-func (s *Service) Authenticate(ctx context.Context, token string) (string, error) {
+// Authenticate checks an admin token and returns the token's name. Failures
+// are audited with the reason and source, throttled as in jobs.Authenticate.
+func (s *Service) Authenticate(ctx context.Context, token, source string) (string, error) {
 	name, reason, err := s.authenticate(ctx, token)
 	if err == nil {
 		return name, nil
@@ -146,13 +154,21 @@ func (s *Service) Authenticate(ctx context.Context, token string) (string, error
 	if reason == "" {
 		return "", err
 	}
-	if _, aerr := s.audit.Append(ctx, audit.Event{
-		Interface: audit.InterfaceAdmin, Action: "admin.authenticate", Decision: audit.Deny,
-		Params: map[string]any{"reason": reason},
-	}); aerr != nil {
-		return "", errors.Join(ErrUnauthenticated, aerr)
+	params := map[string]any{"reason": reason, "source": source}
+	result := ErrUnauthenticated
+	switch s.throttle.Failure(source) {
+	case throttle.Suppress:
+		return "", ErrThrottled
+	case throttle.RecordLimit:
+		params["reason"] = "throttled: too many failed authentications"
+		result = ErrThrottled
 	}
-	return "", ErrUnauthenticated
+	if _, aerr := s.audit.Append(ctx, audit.Event{
+		Interface: audit.InterfaceAdmin, Action: "admin.authenticate", Decision: audit.Deny, Params: params,
+	}); aerr != nil {
+		return "", errors.Join(result, aerr)
+	}
+	return "", result
 }
 
 func (s *Service) authenticate(ctx context.Context, token string) (string, string, error) {

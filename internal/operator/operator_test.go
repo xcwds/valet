@@ -52,7 +52,7 @@ func TestBootstrapOnce(t *testing.T) {
 	if _, err := tokens.Parse(tokens.Admin, tok); err != nil {
 		t.Fatalf("file holds %q", tok)
 	}
-	if name, err := s.Authenticate(ctx, tok); err != nil || name != "bootstrap" {
+	if name, err := s.Authenticate(ctx, tok, "127.0.0.1"); err != nil || name != "bootstrap" {
 		t.Fatalf("Authenticate = %q, %v", name, err)
 	}
 	again, err := s.Bootstrap(ctx, dir)
@@ -75,7 +75,7 @@ func TestAuthenticateFailures(t *testing.T) {
 	sess, _, _ := tokens.New(tokens.Session)
 	other, _, _ := tokens.New(tokens.Admin)
 	for _, tok := range []string{"", "nope", sess, other} {
-		if _, err := s.Authenticate(ctx, tok); !errors.Is(err, ErrUnauthenticated) {
+		if _, err := s.Authenticate(ctx, tok, "127.0.0.1"); !errors.Is(err, ErrUnauthenticated) {
 			t.Errorf("Authenticate(%.15q) = %v", tok, err)
 		}
 	}
@@ -92,10 +92,10 @@ func TestReset(t *testing.T) {
 	if fresh == old {
 		t.Fatal("reset kept the old token")
 	}
-	if _, err := s.Authenticate(ctx, old); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := s.Authenticate(ctx, old, "127.0.0.1"); !errors.Is(err, ErrUnauthenticated) {
 		t.Error("old token still works after reset")
 	}
-	if _, err := s.Authenticate(ctx, fresh); err != nil {
+	if _, err := s.Authenticate(ctx, fresh, "127.0.0.1"); err != nil {
 		t.Errorf("new token: %v", err)
 	}
 	recs, _ := audit.Tail(ctx, db.Read(), audit.Filter{Limit: 100})

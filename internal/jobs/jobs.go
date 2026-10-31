@@ -23,6 +23,7 @@ import (
 
 	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/store"
+	"github.com/xcwds/valet/internal/throttle"
 	"github.com/xcwds/valet/internal/tokens"
 )
 
@@ -52,6 +53,9 @@ var (
 	// see one error, so a probe learns nothing about which part was wrong;
 	// the audit record carries the reason.
 	ErrUnauthenticated = errors.New("unauthenticated")
+	// ErrThrottled is returned once a source has failed too often; those
+	// failures are no longer audited one by one.
+	ErrThrottled = errors.New("too many failed authentications")
 
 	roleName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	jobIDRe  = regexp.MustCompile(`^job-[a-z2-7]{8}$`)
@@ -92,14 +96,15 @@ func (j Job) Repos() []string {
 
 // Service creates, reads and revokes jobs and authenticates sessions.
 type Service struct {
-	db    *store.Store
-	audit *audit.Log
-	now   func() time.Time
+	db       *store.Store
+	audit    *audit.Log
+	throttle *throttle.Throttle
+	now      func() time.Time
 }
 
 // NewService returns a Service.
 func NewService(db *store.Store, log *audit.Log) *Service {
-	return &Service{db: db, audit: log, now: time.Now}
+	return &Service{db: db, audit: log, throttle: throttle.New(throttle.DefaultLimit, throttle.DefaultWindow), now: time.Now}
 }
 
 // CreateRequest describes a new job.
@@ -353,9 +358,11 @@ type Principal struct {
 	Job       Job
 }
 
-// Authenticate resolves a session token to its job. Every failure returns
-// ErrUnauthenticated and is audited with the reason; the caller denies.
-func (s *Service) Authenticate(ctx context.Context, token, iface string) (Principal, error) {
+// Authenticate resolves a session token to its job. A failure returns
+// ErrUnauthenticated and is audited with the reason and source, up to the
+// throttle's limit; past it, the crossing is audited once and further
+// failures from that source return ErrThrottled without a write.
+func (s *Service) Authenticate(ctx context.Context, token, iface, source string) (Principal, error) {
 	p, reason, err := s.authenticate(ctx, token)
 	if err == nil {
 		return p, nil
@@ -363,14 +370,23 @@ func (s *Service) Authenticate(ctx context.Context, token, iface string) (Princi
 	if reason == "" { // a database failure, not a bad token
 		return Principal{}, err
 	}
-	params := map[string]any{"reason": reason}
+	params := map[string]any{"reason": reason, "source": source}
+	result := ErrUnauthenticated
+	switch s.throttle.Failure(source) {
+	case throttle.Suppress:
+		return Principal{}, ErrThrottled
+	case throttle.RecordLimit:
+		params["reason"] = "throttled: too many failed authentications"
+		params["limit"] = fmt.Sprintf("%d per %s", throttle.DefaultLimit, throttle.DefaultWindow)
+		result = ErrThrottled
+	}
 	if _, aerr := s.audit.Append(ctx, audit.Event{
 		JobID: p.Job.ID, SessionID: p.SessionID, Interface: iface,
 		Action: "session.authenticate", Decision: audit.Deny, Params: params,
 	}); aerr != nil {
-		return Principal{}, errors.Join(ErrUnauthenticated, aerr)
+		return Principal{}, errors.Join(result, aerr)
 	}
-	return Principal{}, ErrUnauthenticated
+	return Principal{}, result
 }
 
 func (s *Service) authenticate(ctx context.Context, token string) (Principal, string, error) {

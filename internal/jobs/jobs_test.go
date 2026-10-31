@@ -140,7 +140,7 @@ func TestCreateValidation(t *testing.T) {
 func TestAuthenticate(t *testing.T) {
 	f := newFixture(t)
 	j, tok := f.create(t, CreateRequest{Role: "reviewer", Repos: []string{"xcwds/site"}})
-	p, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP)
+	p, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP, "10.0.0.1")
 	if err != nil || p.Job.ID != j.ID || p.SessionID == "" {
 		t.Fatalf("Authenticate = %+v, %v", p, err)
 	}
@@ -171,7 +171,7 @@ func TestAuthenticateFailures(t *testing.T) {
 		strings.ToUpper(tok): "malformed token",
 	}
 	for in, reason := range cases {
-		_, err := f.svc.Authenticate(ctx, in, audit.InterfaceGit)
+		_, err := f.svc.Authenticate(ctx, in, audit.InterfaceGit, "10.0.0.1")
 		if !errors.Is(err, ErrUnauthenticated) {
 			t.Errorf("Authenticate(%.20q) = %v", in, err)
 			continue
@@ -190,11 +190,11 @@ func TestExpiry(t *testing.T) {
 	f := newFixture(t)
 	j, tok := f.create(t, CreateRequest{Role: "reviewer", TTL: time.Hour})
 	f.now = f.now.Add(time.Hour - time.Second)
-	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP); err != nil {
+	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP, "10.0.0.1"); err != nil {
 		t.Fatalf("a second before expiry: %v", err)
 	}
 	f.now = f.now.Add(time.Second)
-	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP, "10.0.0.1"); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("at expiry: %v", err)
 	}
 	r := lastDeny(t, f)
@@ -213,7 +213,7 @@ func TestRevoke(t *testing.T) {
 	if err := f.svc.Revoke(ctx, j.ID, "admin:test", "probing"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP); !errors.Is(err, ErrUnauthenticated) {
+	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP, "10.0.0.1"); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("revoked session authenticated: %v", err)
 	}
 	if r := lastDeny(t, f); !strings.Contains(string(r.Params), "job revoked") {
@@ -256,5 +256,38 @@ func TestListAndGet(t *testing.T) {
 		if _, err := f.svc.Get(ctx, id); !errors.Is(err, ErrNotFound) {
 			t.Errorf("Get(%q) = %v", id, err)
 		}
+	}
+}
+
+func TestFailedAuthIsThrottled(t *testing.T) {
+	f := newFixture(t)
+	_, tok := f.create(t, CreateRequest{Role: "reviewer"})
+	before := len(f.auditTrail(t))
+	var unauth, throttled int
+	for range 50 {
+		_, err := f.svc.Authenticate(ctx, "vlt_sess_bogus", audit.InterfaceMCP, "10.0.0.66")
+		switch {
+		case errors.Is(err, ErrThrottled):
+			throttled++
+		case errors.Is(err, ErrUnauthenticated):
+			unauth++
+		}
+	}
+	if unauth != 10 || throttled != 40 {
+		t.Errorf("%d unauthenticated, %d throttled; want 10 and 40", unauth, throttled)
+	}
+	recs := f.auditTrail(t)
+	if got := len(recs) - before; got != 11 {
+		t.Errorf("%d audit records for 50 failures, want 10 plus one throttle record", got)
+	}
+	if last := recs[len(recs)-1]; !strings.Contains(string(last.Params), "throttled") || !strings.Contains(string(last.Params), "10.0.0.66") {
+		t.Errorf("throttle record = %s", last.Params)
+	}
+	// The flooding source's valid token still works, and other sources are untouched.
+	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP, "10.0.0.66"); err != nil {
+		t.Errorf("valid token from a throttled source: %v", err)
+	}
+	if _, err := f.svc.Authenticate(ctx, "vlt_sess_bogus", audit.InterfaceMCP, "10.0.0.67"); !errors.Is(err, ErrUnauthenticated) {
+		t.Errorf("another source: %v", err)
 	}
 }

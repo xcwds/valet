@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -275,5 +276,21 @@ func TestResetToken(t *testing.T) {
 	fresh, _ := os.ReadFile(path)
 	if string(fresh) == string(old) {
 		t.Fatal("token unchanged")
+	}
+}
+
+func TestAgentPortThrottlesFloods(t *testing.T) {
+	v := startValetd(t)
+	var codes []int
+	for range 15 {
+		codes = append(codes, status(t, "GET", v.agent+"/mcp", "Bearer vlt_sess_bogus"))
+	}
+	want := "[401 401 401 401 401 401 401 401 401 401 429 429 429 429 429]"
+	if fmt.Sprint(codes) != want {
+		t.Fatalf("codes = %v, want %s", codes, want)
+	}
+	_, out, _ := v.cli(t, "", "audit", "tail", "--decision", "deny", "-n", "100")
+	if n := strings.Count(out, "session.authenticate"); n != 11 {
+		t.Errorf("%d audited failures for 15 attempts, want 11", n)
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/xcwds/valet/internal/jobs"
 	"github.com/xcwds/valet/internal/operator"
 	"github.com/xcwds/valet/internal/secrets"
+	"github.com/xcwds/valet/internal/throttle"
 )
 
 // Deps are the services the API exposes.
@@ -61,8 +62,13 @@ func (d Deps) requireAdmin(next http.Handler) http.Handler {
 			return
 		}
 		tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		name, err := d.Operator.Authenticate(r.Context(), strings.TrimSpace(tok))
+		name, err := d.Operator.Authenticate(r.Context(), strings.TrimSpace(tok), throttle.Source(r))
 		if err != nil {
+			if errors.Is(err, operator.ErrThrottled) {
+				w.Header().Set("Retry-After", strconv.Itoa(d.Operator.RetryAfter()))
+				writeError(w, http.StatusTooManyRequests, "too many failed authentications")
+				return
+			}
 			if errors.Is(err, operator.ErrUnauthenticated) {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="valet-admin"`)
 				writeError(w, http.StatusUnauthorized, "unauthenticated")

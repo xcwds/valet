@@ -55,6 +55,9 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
 - `internal/jobs`: jobs and their session (create, get, list, revoke, all audited);
   `RequireSession` wraps the agent port (Bearer, or the basic-auth password git sends) and puts a
   `Principal` in the request context. Expiry is derived from `expires_at` on every request.
+- `internal/throttle`: failed authentications per source IP. The first 10 a minute are audited one
+  by one, the crossing once as `throttled`, later ones get 429 with no write, so a flooding agent
+  can't fill the disk or stall audit writes. Valid tokens are never throttled.
 - `internal/operator`: admin tokens. valetd writes the first one to `data_dir/admin.token` (0600);
   `valet admin reset-token` (valetd stopped) replaces a lost one.
 - `internal/adminapi`: the admin API at `/api/` (jobs, secrets, audit), Bearer admin token only,
