@@ -90,6 +90,15 @@ func TestCreate(t *testing.T) {
 	}
 }
 
+func TestRequireRoles(t *testing.T) {
+	f := newFixture(t)
+	f.svc.RequireRoles(func(r string) bool { return r == "reviewer" })
+	if _, _, err := f.svc.Create(ctx, CreateRequest{Role: "root", CreatedBy: "admin:test"}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("undefined role: %v", err)
+	}
+	f.create(t, CreateRequest{Role: "reviewer"})
+}
+
 func TestTokenNotStored(t *testing.T) {
 	f := newFixture(t)
 	_, tok := f.create(t, CreateRequest{Role: "reviewer"})

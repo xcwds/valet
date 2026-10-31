@@ -17,9 +17,11 @@ import (
 	"github.com/xcwds/valet/internal/logging"
 	"github.com/xcwds/valet/internal/operator"
 	"github.com/xcwds/valet/internal/pipeline"
+	"github.com/xcwds/valet/internal/policy"
 	"github.com/xcwds/valet/internal/secrets"
 	"github.com/xcwds/valet/internal/store"
 	"github.com/xcwds/valet/internal/version"
+	"github.com/xcwds/valet/policies"
 )
 
 // daemonCmd runs valetd: valetd [--config FILE], or valetd version.
@@ -127,8 +129,21 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		}
 	})
 	go sweep(ctx, creds)
-	_ = pipeline.New(registry, pipeline.DenyAll{}, auditLog, creds, log)
 	logging.For(log, logging.Hephaestus).Info("connectors loaded", "actions", len(registry.Actions()))
+
+	// Themis: every role and condition compiles now, or valetd doesn't start.
+	pol, err := loadPolicy(cfg.Policies)
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	themis := logging.For(log, logging.Themis)
+	themis.Info("policy loaded", "source", pol.Source(), "roles", pol.Roles())
+	if un := pol.Unmatched(registry.Actions()); len(un) > 0 {
+		themis.Info("rules that match no registered action (a typo in a pattern denies silently)", "rules", un)
+	}
+	jobSvc.RequireRoles(pol.HasRole)
+	_ = pipeline.New(registry, pol, auditLog, creds, log)
 
 	if _, err := auditLog.Append(ctx, audit.Event{
 		Interface: audit.InterfaceSystem, Action: "valetd.start", Decision: audit.Info,
@@ -174,4 +189,12 @@ func sweep(ctx context.Context, creds *connector.Cache) {
 			creds.Sweep()
 		}
 	}
+}
+
+// loadPolicy loads roles from path, or the built-in defaults when it is empty.
+func loadPolicy(path string) (*policy.Policy, error) {
+	if path == "" {
+		return policy.LoadFS("built-in defaults", policies.Defaults)
+	}
+	return policy.LoadPath(path)
 }

@@ -1,0 +1,112 @@
+# Valet's default roles (RFC Policy engine). Each document is one role: an
+# ordered list of rules. The first rule whose action pattern and `when`
+# condition match decides; if none does, the request is denied.
+#
+# A `when` condition is CEL over:
+#   job     id, role, repos, branch_pattern, created_by, expires_at
+#   action  name, connector, risk, interface
+#   params  the action's validated params
+# A condition that errors (a missing param, say) denies; it never falls
+# through to a later rule. Params are validated against the action's schema
+# before policy runs, so their types are what the rules expect; CEL's `==`
+# between different types is false, not an error.
+#
+# Patterns: `*` matches within one dot-separated segment, `**` (a whole
+# segment) matches one or more segments, `{a,b}` matches either word.
+---
+role: reviewer
+description: Reads and comments on pull requests. Can never approve, push or merge.
+rules:
+  - name: comment-or-request-changes
+    action: github.pr.review.submit
+    when: params.repo in job.repos && params.event in ['COMMENT', 'REQUEST_CHANGES']
+    decision: allow
+  - name: never-approve
+    action: github.pr.review.submit
+    when: params.event == 'APPROVE'
+    decision: deny
+    reason: a reviewer agent may not approve
+    alert: true
+  - name: read
+    action: github.{repo,pr,issue,checks}.read
+    when: params.repo in job.repos
+    decision: allow
+  - name: read-files
+    action: github.repo.file.get
+    when: params.repo in job.repos
+    decision: allow
+  - name: read-diffs
+    action: github.pr.diff
+    when: params.repo in job.repos
+    decision: allow
+  - name: comment
+    action: github.pr.comment
+    when: params.repo in job.repos
+    decision: allow
+  - name: fetch
+    action: git.fetch
+    when: params.repo in job.repos
+    decision: allow
+  - name: never-merge
+    action: github.pr.merge
+    decision: deny
+    reason: a reviewer agent may not merge
+    alert: true
+---
+role: implementer
+description: Pushes to its own job branch and opens pull requests. Merging needs a human.
+rules:
+  - name: push-own-branch
+    action: git.push
+    when: >
+      params.repo in job.repos &&
+      params.refs.all(r, r.name.startsWith('refs/heads/agent/' + job.id + '/') && !r.delete)
+    decision: allow
+  - name: push-elsewhere
+    action: git.push
+    decision: deny
+    reason: an implementer may push only to agent/<job>/ branches, and never delete one
+    alert: true
+  - name: fetch
+    action: git.fetch
+    when: params.repo in job.repos
+    decision: allow
+  - name: read
+    action: github.{repo,pr,issue,checks}.read
+    when: params.repo in job.repos
+    decision: allow
+  - name: read-files
+    action: github.repo.file.get
+    when: params.repo in job.repos
+    decision: allow
+  - name: read-diffs
+    action: github.pr.diff
+    when: params.repo in job.repos
+    decision: allow
+  - name: open-pr
+    action: github.pr.create
+    when: >
+      params.repo in job.repos && params.base == 'main' &&
+      params.head.startsWith('agent/' + job.id + '/')
+    decision: allow
+  - name: comment
+    action: github.{pr,issue}.comment
+    when: params.repo in job.repos
+    decision: allow
+  - name: merge-needs-a-human
+    action: github.pr.merge
+    when: params.repo in job.repos
+    decision: require_approval
+    alert: true
+---
+role: triage
+description: Reads and comments on issues. Never touches code or pull requests.
+rules:
+  - name: read
+    action: github.{repo,issue}.read
+    when: params.repo in job.repos
+    decision: allow
+  - name: comment
+    action: github.issue.comment
+    when: params.repo in job.repos
+    decision: allow

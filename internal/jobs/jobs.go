@@ -101,7 +101,11 @@ type Service struct {
 	throttle *throttle.Throttle
 	now      func() time.Time
 	onRevoke []func(ctx context.Context, jobID string)
+	hasRole  func(string) bool
 }
+
+// RequireRoles makes Create refuse roles the policy doesn't define.
+func (s *Service) RequireRoles(hasRole func(string) bool) { s.hasRole = hasRole }
 
 // OnRevoke registers f to run after a job is revoked, e.g. to drop and revoke
 // its upstream credentials. Register before serving requests.
@@ -188,6 +192,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Job, string, e
 	req, err := req.validate()
 	if err != nil {
 		return Job{}, "", err
+	}
+	if s.hasRole != nil && !s.hasRole(req.Role) {
+		return Job{}, "", fmt.Errorf("%w: role %q is not defined in the policy", ErrInvalid, req.Role)
 	}
 	id, err := newJobID()
 	if err != nil {
