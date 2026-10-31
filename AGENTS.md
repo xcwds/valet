@@ -73,7 +73,11 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
 - `internal/connector/github`: the GitHub App connector. `Mint` signs an App JWT (RS256, stdlib),
   checks every job repo belongs to the installation's account, requests a token narrowed to the
   job's repos and role permissions, and revokes and refuses one that comes back broader. Backoff per
-  job and on rate limits. The action catalog is #13. Operator setup: `docs/github-app.md`.
+  job and on rate limits. The v1 actions (`actions.go`) are plain REST calls that return curated
+  fields only; `repo` params must be canonical lowercase `owner/name` (schema pattern, rechecked in
+  `Execute`), file paths are escaped per segment with `.`/`..` refused. Schemas must be trees:
+  build each from a constructor, never share one `*jsonschema.Schema`. Operator setup:
+  `docs/github-app.md`.
 - `internal/pipeline`: the one path every agent request takes: resolve and validate → policy →
   audit the decision → mint (cached) → execute → audit the result. Anything but an allow returns
   `*pipeline.Denied` before minting; `require_approval` fails closed until #23. Until #11 valetd

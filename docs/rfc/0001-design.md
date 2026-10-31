@@ -381,7 +381,7 @@ Go, shipped as one static binary and one image, with SQLite by default.
 | Language        | Go                                                         | Strong stdlib for proxies (`httputil.ReverseProxy`, CONNECT); single binary; same choice as Agent Vault, so its code is a useful reference |
 | MCP             | `modelcontextprotocol/go-sdk`, streamable HTTP             | Official SDK; one endpoint serves every connector's tools                                                                |
 | Policy          | `google/cel-go`                                            | Embedded, sandboxed expressions; rules stay data, not code                                                               |
-| GitHub          | `google/go-github` + `bradleyfalzon/ghinstallation`        | App JWT and installation-token minting                                                                                   |
+| GitHub          | `net/http`, App JWT signed with the standard library        | Eleven REST calls and one JWT don't need a client library; each action returns curated fields only, never raw API objects |
 | Storage         | SQLite (`modernc.org/sqlite`, no cgo); Postgres later      | Zero-setup locally; same schema scales up                                                                                |
 | Secrets at rest | AES-GCM envelope encryption, key from file or env          | Upstream secrets encrypted in the DB; key never in the image                                                             |
 | Audit           | Hash-chained rows in SQLite + JSON lines on stdout         | Tamper-evident locally; Promtail/Loki can ship stdout                                                                    |
