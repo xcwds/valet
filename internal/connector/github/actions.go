@@ -177,8 +177,10 @@ func (c *Connector) Execute(ctx context.Context, cred connector.Credential, _ jo
 		return x.fileGet(p)
 	case "issue.read":
 		return x.issueRead(p)
-	case "issue.comment", "pr.comment":
-		return x.comment(p)
+	case "issue.comment":
+		return x.comment(p, false)
+	case "pr.comment":
+		return x.comment(p, true)
 	case "pr.read":
 		return x.prRead(p)
 	case "pr.diff":
@@ -328,6 +330,11 @@ func (x exec) issueRead(p params) (connector.Result, error) {
 	if err != nil {
 		return result(status, nil, err)
 	}
+	// GitHub returns pull requests from the issues endpoint too; an issue
+	// action must not reach one (the triage role relies on it).
+	if i.PullRequest != nil {
+		return result(status, nil, fmt.Errorf("github: #%d is a pull request; use github.pr.read", p.Number))
+	}
 	labels := []string{}
 	for _, l := range i.Labels {
 		labels = append(labels, l.Name)
@@ -345,7 +352,22 @@ func deref(s *string) string {
 	return *s
 }
 
-func (x exec) comment(p params) (connector.Result, error) {
+// comment posts on an issue's or a pull request's conversation. GitHub uses
+// one endpoint for both, so the target's kind is checked first: an issue
+// action never comments on a pull request, nor the reverse.
+func (x exec) comment(p params, onPR bool) (connector.Result, error) {
+	var target struct {
+		PullRequest *struct{} `json:"pull_request"`
+	}
+	if status, err := x.json(http.MethodGet, fmt.Sprintf("/issues/%d", p.Number), nil, http.StatusOK, &target); err != nil {
+		return result(status, nil, err)
+	}
+	switch isPR := target.PullRequest != nil; {
+	case onPR && !isPR:
+		return connector.Result{}, fmt.Errorf("github: #%d is an issue, not a pull request; use github.issue.comment", p.Number)
+	case !onPR && isPR:
+		return connector.Result{}, fmt.Errorf("github: #%d is a pull request; use github.pr.comment", p.Number)
+	}
 	var c struct {
 		ID      int64  `json:"id"`
 		HTMLURL string `json:"html_url"`

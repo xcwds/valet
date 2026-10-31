@@ -202,6 +202,10 @@ func TestActions(t *testing.T) {
 		t.Run(tc.action, func(t *testing.T) {
 			f := newAPIFake(t)
 			f.on(tc.method, tc.path, tc.status, tc.reply)
+			// Comment actions look up the target's kind first: #3 is an
+			// issue, #7 a pull request.
+			f.on("GET", "/repos/xcwds/site/issues/3", 200, `{"number":3,"title":"t","state":"open","user":{"login":"u"},"labels":[{"name":"bug"}],"comments":2}`)
+			f.on("GET", "/repos/xcwds/site/issues/7", 200, `{"number":7,"pull_request":{}}`)
 			res, err := execute(t, f, tc.action, tc.params)
 			if err != nil {
 				t.Fatal(err)
@@ -284,6 +288,32 @@ func TestFileGet(t *testing.T) {
 	f.on("GET", "/repos/xcwds/site/contents/a%3Fx=1", 200, `{"type":"file","path":"a?x=1","sha":"s","size":0,"encoding":"base64","content":""}`)
 	if _, err := execute(t, f, "repo.file.get", `{"repo":"xcwds/site","path":"a?x=1"}`); err != nil {
 		t.Errorf("escaped path: %v", err)
+	}
+}
+
+// Issue actions never reach a pull request, nor the reverse: GitHub serves
+// both from /issues, and roles depend on the difference.
+func TestIssueAndPRActionsStayApart(t *testing.T) {
+	f := newAPIFake(t)
+	f.on("GET", "/repos/xcwds/site/issues/3", 200, `{"number":3}`)
+	f.on("GET", "/repos/xcwds/site/issues/7", 200, `{"number":7,"pull_request":{"url":"x"}}`)
+	f.on("POST", "/repos/xcwds/site/issues/3/comments", 201, `{"id":1}`)
+	f.on("POST", "/repos/xcwds/site/issues/7/comments", 201, `{"id":2}`)
+	for _, tc := range []struct{ action, params, want string }{
+		{"issue.comment", `{"repo":"xcwds/site","number":7,"body":"x"}`, "is a pull request"},
+		{"issue.read", `{"repo":"xcwds/site","number":7}`, "is a pull request"},
+		{"pr.comment", `{"repo":"xcwds/site","number":3,"body":"x"}`, "is an issue"},
+	} {
+		if _, err := execute(t, f, tc.action, tc.params); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s %s: %v", tc.action, tc.params, err)
+		}
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.reqs {
+		if r.Method == "POST" {
+			t.Errorf("a comment was posted on the wrong kind of target: %s", r.Path)
+		}
 	}
 }
 
@@ -381,6 +411,7 @@ func TestReviewerThroughThePipeline(t *testing.T) {
 	mux.Handle("/repos/", api.srv.Config.Handler)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
+	api.on("GET", "/repos/xcwds/site/issues/7", 200, `{"number":7,"pull_request":{}}`)
 	api.on("POST", "/repos/xcwds/site/issues/7/comments", 201, `{"id":1}`)
 	api.on("POST", "/repos/xcwds/site/pulls/7/reviews", 200, `{"id":2,"state":"APPROVED"}`)
 
