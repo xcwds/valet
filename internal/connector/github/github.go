@@ -182,6 +182,7 @@ func (c *Connector) mint(ctx context.Context, repos []string, perms map[string]s
 		Token        string            `json:"token"`
 		ExpiresAt    time.Time         `json:"expires_at"`
 		Permissions  map[string]string `json:"permissions"`
+		Selection    string            `json:"repository_selection"`
 		Repositories []struct {
 			FullName string `json:"full_name"`
 		} `json:"repositories"`
@@ -199,17 +200,31 @@ func (c *Connector) mint(ctx context.Context, repos []string, perms map[string]s
 		return connector.Credential{}, errors.New("github: access token response is missing the token or its expiry")
 	}
 	// Belt and braces: never use a token broader than asked for.
-	if err := checkGrant(resp.Permissions, perms, resp.Repositories, repos); err != nil {
+	if err := checkGrant(resp.Permissions, perms, resp.Selection, resp.Repositories, repos); err != nil {
 		_ = c.Revoke(context.WithoutCancel(ctx), cred)
 		return connector.Credential{}, err
 	}
 	return cred, nil
 }
 
-func checkGrant(got, want map[string]string, gotRepos []struct {
+func checkGrant(got, want map[string]string, selection string, gotRepos []struct {
 	FullName string `json:"full_name"`
 }, wantRepos []string,
 ) error {
+	// A token for every repository says "all" and lists none, so the
+	// listed repositories alone can't show it's narrow.
+	if selection != "selected" {
+		return fmt.Errorf("github: the token covers repository selection %q, not the job's repositories; revoked", selection)
+	}
+	seen := map[string]bool{}
+	for _, r := range gotRepos {
+		seen[strings.ToLower(r.FullName)] = true
+	}
+	for _, r := range wantRepos {
+		if !seen[r] {
+			return fmt.Errorf("github: the token doesn't list %s; revoked", r)
+		}
+	}
 	for name, level := range got {
 		if name == "metadata" && level == "read" {
 			continue // GitHub adds it to every installation token

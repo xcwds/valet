@@ -64,6 +64,8 @@ type fakeGitHub struct {
 	retryAfter string            // with it
 	extraPerm  map[string]string // add to granted permissions
 	extraRepo  string            // add to granted repositories
+	selectAll  bool              // answer as if the token covered every repository
+	dropRepos  bool              // list no repositories
 	expiresIn  time.Duration
 }
 
@@ -141,11 +143,18 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		if f.extraRepo != "" {
 			repos = append(repos, map[string]string{"full_name": f.extraRepo})
 		}
+		selection := "selected"
+		if f.selectAll {
+			selection, repos = "all", nil
+		}
+		if f.dropRepos {
+			repos = nil
+		}
 		f.n++
 		w.WriteHeader(201)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"token": fmt.Sprintf("ghs_faketoken%d", f.n), "expires_at": time.Now().Add(f.expiresIn).UTC().Format(time.RFC3339),
-			"permissions": perms, "repositories": repos,
+			"permissions": perms, "repository_selection": selection, "repositories": repos,
 		})
 	case r.Method == "DELETE" && r.URL.Path == "/installation/token":
 		f.revoked = append(f.revoked, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
