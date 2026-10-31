@@ -361,3 +361,20 @@ func seqs(rs []Record) []int64 {
 	}
 	return out
 }
+
+func TestSensitiveKeyNames(t *testing.T) {
+	for _, k := range []string{
+		"token", "Token", "github_token", "GITHUB_TOKEN", "X-Api-Key", "x-auth-token", "Authorization",
+		"access_token_secret", "db_password", "bearer_token", "client.secret", "private key",
+		"Set-Cookie", "aws_session_id", "webhook_signature", "ssh_passphrase", "credentials",
+	} {
+		if !isSensitiveKey(k) {
+			t.Errorf("%q not treated as sensitive", k)
+		}
+	}
+	for _, k := range []string{"repo", "number", "event", "body", "title", "name", "key_id", "length", "base", "head"} {
+		if isSensitiveKey(k) {
+			t.Errorf("%q treated as sensitive", k)
+		}
+	}
+}

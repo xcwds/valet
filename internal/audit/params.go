@@ -17,18 +17,27 @@ const MaxStringLen = 1024
 // Redacted replaces values under sensitive keys.
 const Redacted = "[redacted]"
 
-// sensitiveKeys are redacted at any depth, whatever the caller marks, as a
-// second line of defense behind connector ActionSpecs (#10). Matched
-// case-insensitively, ignoring - and _.
-var sensitiveKeys = map[string]bool{
-	"authorization": true, "password": true, "passwd": true, "secret": true,
-	"token": true, "accesstoken": true, "refreshtoken": true, "apikey": true,
-	"privatekey": true, "clientsecret": true, "cookie": true, "setcookie": true,
-	"sessiontoken": true, "credential": true, "credentials": true,
+// sensitiveWords make a params key sensitive wherever they appear in it
+// (github_token, X-Api-Key, db_password …), at any depth, whatever the
+// caller marks: a second line of defense behind connector ActionSpecs (#10).
+// Keys are compared lowercased with - _ . and spaces removed. This
+// over-redacts a few harmless keys (token_count), the safe side for an audit
+// log.
+var sensitiveWords = []string{
+	"authorization", "bearer", "password", "passwd", "passphrase", "secret", "token",
+	"apikey", "privatekey", "cookie", "credential", "signature", "sessionid",
 }
 
-func normalizeKey(k string) string {
-	return strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(k))
+var keyNormalizer = strings.NewReplacer("-", "", "_", "", ".", "", " ", "")
+
+func isSensitiveKey(k string) bool {
+	k = keyNormalizer.Replace(strings.ToLower(k))
+	for _, w := range sensitiveWords {
+		if strings.Contains(k, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // canonicalParams turns params into canonical JSON: object keys sorted, keys
@@ -72,7 +81,7 @@ func scrub(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, child := range t {
-			if sensitiveKeys[normalizeKey(k)] {
+			if isSensitiveKey(k) {
 				t[k] = Redacted
 				continue
 			}
