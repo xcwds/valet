@@ -35,6 +35,8 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   `internal/store/migrations/NNNN_name.sql`, numbered without gaps, each applied in its own
   transaction and recorded with a SHA-256 in `schema_migrations`. The data directory must be 0700
   and the database 0600; valetd refuses looser modes rather than fixing them silently.
+  `Open` also takes an exclusive `flock` on `data_dir/valetd.lock`, so a second valetd on the
+  same data directory exits with an error.
 - `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with

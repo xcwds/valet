@@ -26,9 +26,15 @@ import (
 // FileName is the database's name inside the data directory.
 const FileName = "valet.db"
 
+// LockName is the file valetd locks so only one process uses a data directory.
+const LockName = "valetd.lock"
+
+func lockPath(dataDir string) string { return filepath.Join(dataDir, LockName) }
+
 // Store holds the database's writer and reader pools.
 type Store struct {
 	path   string
+	lock   *os.File
 	writer *sql.DB
 	reader *sql.DB
 }
@@ -43,13 +49,21 @@ func open(ctx context.Context, dataDir string, migrations fs.FS) (*Store, error)
 	if err := privateDir(dataDir); err != nil {
 		return nil, err
 	}
+	// One valetd per data directory: the single writer the audit chain
+	// relies on must really be single, and migrations must not race.
+	lock, err := lockDir(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	path := filepath.Join(dataDir, FileName)
 	if err := privateFile(path); err != nil {
+		_ = lock.Close()
 		return nil, err
 	}
 
 	writer, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
+		_ = lock.Close()
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	writer.SetMaxOpenConns(1)
@@ -59,11 +73,12 @@ func open(ctx context.Context, dataDir string, migrations fs.FS) (*Store, error)
 	reader, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		_ = writer.Close()
+		_ = lock.Close()
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
 	}
 	reader.SetMaxOpenConns(max(4, runtime.NumCPU()))
 
-	s := &Store{path: path, writer: writer, reader: reader}
+	s := &Store{path: path, lock: lock, writer: writer, reader: reader}
 	if err := writer.PingContext(ctx); err != nil {
 		_ = s.Close()
 		return nil, fmt.Errorf("store: open %s: %w", path, err)
@@ -98,13 +113,18 @@ func (s *Store) Path() string { return s.path }
 func (s *Store) Read() *sql.DB { return s.reader }
 
 // Write runs fn in a write transaction (BEGIN IMMEDIATE on the single writer
-// connection) and commits if fn returns nil. Any error rolls back.
+// connection) and commits if fn returns nil. An error or a panic in fn rolls
+// back, so the writer connection is never left inside a transaction.
 func (s *Store) Write(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 	tx, err := s.writer.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: begin: %w", err)
 	}
 	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
 		if err != nil {
 			_ = tx.Rollback()
 		}
@@ -124,9 +144,9 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.reader.QueryRowContext(ctx, "SELECT 1").Scan(&one)
 }
 
-// Close closes both pools.
+// Close closes both pools, then releases the data directory lock.
 func (s *Store) Close() error {
-	return errors.Join(s.reader.Close(), s.writer.Close())
+	return errors.Join(s.reader.Close(), s.writer.Close(), s.lock.Close())
 }
 
 // privateDir creates dir with mode 0700, or checks an existing one isn't open

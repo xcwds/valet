@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func openT(t *testing.T, dir string) *Store {
@@ -64,6 +65,9 @@ func TestFreshDatabase(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "data")
 	s := openT(t, dir)
 
+	if _, err := os.Stat(filepath.Join(dir, LockName)); err != nil {
+		t.Errorf("lock file: %v", err)
+	}
 	got := strings.Join(tables(t, s.Read()), ",")
 	if want := "audit_events,jobs,schema_migrations,secrets,sessions"; got != want {
 		t.Errorf("tables = %s, want %s", got, want)
@@ -350,4 +354,58 @@ func TestPing(t *testing.T) {
 	if err := s.Ping(context.Background()); err == nil {
 		t.Fatal("Ping succeeded on a closed store")
 	}
+}
+
+func TestPanicInWriteRollsBack(t *testing.T) {
+	s := openT(t, filepath.Join(t.TempDir(), "data"))
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("panic was swallowed")
+			}
+		}()
+		_ = s.Write(context.Background(), func(tx *sql.Tx) error {
+			if _, err := tx.Exec(`INSERT INTO jobs VALUES ('j', 'r', '{}', 'p', 60, 't', 'active', 'op', 't', NULL)`); err != nil {
+				t.Fatal(err)
+			}
+			panic("boom")
+		})
+	}()
+
+	// The writer must be free again, and the insert gone.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := s.Write(ctx, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO jobs VALUES ('k', 'r', '{}', 'p', 60, 't', 'active', 'op', 't', NULL)`)
+		return err
+	}); err != nil {
+		t.Fatalf("write after a panic: %v (writer left in a transaction?)", err)
+	}
+	var n int
+	if err := s.Read().QueryRow(`SELECT count(*) FROM jobs WHERE id = 'j'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("panicked insert kept: %d (%v)", n, err)
+	}
+}
+
+func TestOneValetdPerDataDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("flock is Unix-only")
+	}
+	dir := filepath.Join(t.TempDir(), "data")
+	s := openT(t, dir)
+
+	_, err := Open(context.Background(), dir)
+	if err == nil || !strings.Contains(err.Error(), "in use by another valetd") {
+		t.Fatalf("second Open: err = %v, want it refused", err)
+	}
+
+	// Closing releases the lock.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("Open after Close: %v", err)
+	}
+	_ = s2.Close()
 }
