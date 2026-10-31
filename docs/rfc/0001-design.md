@@ -59,6 +59,8 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
     the owner plans to run all agentic development through Valet.
 13. **Separate from Agent Vault.** Borrow its ideas; don't fork it or build on it.
 14. **Go, one static binary, one image, SQLite by default** (see [Tech stack](#tech-stack)).
+    Everything lives under the `xcwds` owner: repo `xcwds/valet`, Go module
+    `github.com/xcwds/valet`, image `ghcr.io/xcwds/valet`.
 15. **Myth names in docs, plain names in code.** Components carry Greek-myth names in docs, UI and
     log prefixes; code paths stay descriptive (see [Naming](#naming)).
 16. **Apache-2.0.** Permissive, with an explicit patent grant, as is usual for Go infrastructure
@@ -115,7 +117,7 @@ the same vocabulary regardless of which tool or interface the request came throu
 | Connector     | A plugin for one upstream: credentials, action catalog, executors, request classifiers         | `github`, `forgejo`, `linear`, `http:homeassistant`                 |
 | Action        | A namespaced, typed operation with a parameter schema and a risk level                         | `github.pr.review.submit {repo, number, event}`                     |
 | Role          | A reusable template of policy rules                                                           | `reviewer`, `implementer`, `triage`                                 |
-| Job           | One unit of agent work: a role bound to concrete resources, with a TTL                         | implementer on `cmw/site`, branch `agent/job-42/*`, 2 h             |
+| Job           | One unit of agent work: a role bound to concrete resources, with a TTL                         | implementer on `xcwds/site`, branch `agent/job-42/*`, 2 h           |
 | Session token | Opaque bearer token the agent holds, bound to one job; revocable                               | `vlt_sess_…`; useless outside the job's scope                       |
 | Decision      | allow, deny, or require_approval, plus the rule that produced it                               | `deny: reviewer may not APPROVE`                                    |
 | Audit event   | Append-only record of every request: job, action, params, decision, upstream result            | written for denied attempts too                                     |
@@ -293,7 +295,7 @@ exit.
 # compose.yaml (Valet side)
 services:
   valet:
-    image: ghcr.io/cmw/valet:dev
+    image: ghcr.io/xcwds/valet:dev
     ports: ['127.0.0.1:14400:14400'] # admin UI/API, host only
     volumes: [valet-data:/data]
     secrets: [github_app_key, master_key]
