@@ -5,14 +5,18 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/xcwds/valet/internal/adminapi"
 	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/config"
+	"github.com/xcwds/valet/internal/connector"
+	"github.com/xcwds/valet/internal/connector/builtin"
 	"github.com/xcwds/valet/internal/daemon"
 	"github.com/xcwds/valet/internal/jobs"
 	"github.com/xcwds/valet/internal/logging"
 	"github.com/xcwds/valet/internal/operator"
+	"github.com/xcwds/valet/internal/pipeline"
 	"github.com/xcwds/valet/internal/secrets"
 	"github.com/xcwds/valet/internal/store"
 	"github.com/xcwds/valet/internal/version"
@@ -108,6 +112,24 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	}
 	jobSvc := jobs.NewService(st, auditLog)
 
+	// Hephaestus: the connectors, checked now so a bad catalog stops valetd
+	// at start. The pipeline is what MCP (#14) and git (#17) will call; until
+	// policy (#11) is configured it denies everything.
+	registry, err := connector.NewRegistry(builtin.All()...)
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	creds := connector.NewCache()
+	jobSvc.OnRevoke(func(ctx context.Context, jobID string) {
+		if err := creds.DropJob(ctx, registry, jobID); err != nil {
+			log.Warn("revoking upstream credentials", "job", jobID, "err", err)
+		}
+	})
+	go sweep(ctx, creds)
+	_ = pipeline.New(registry, pipeline.DenyAll{}, auditLog, creds, log)
+	logging.For(log, logging.Hephaestus).Info("connectors loaded", "actions", len(registry.Actions()))
+
 	if _, err := auditLog.Append(ctx, audit.Event{
 		Interface: audit.InterfaceSystem, Action: "valetd.start", Decision: audit.Info,
 		Params: map[string]any{"version": version.String()},
@@ -138,4 +160,18 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		return ExitError
 	}
 	return ExitOK
+}
+
+// sweep drops expired credentials from the cache every few minutes.
+func sweep(ctx context.Context, creds *connector.Cache) {
+	t := time.NewTicker(5 * time.Minute)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			creds.Sweep()
+		}
+	}
 }

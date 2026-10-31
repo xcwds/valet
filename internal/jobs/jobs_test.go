@@ -210,8 +210,13 @@ func TestExpiry(t *testing.T) {
 func TestRevoke(t *testing.T) {
 	f := newFixture(t)
 	j, tok := f.create(t, CreateRequest{Role: "reviewer"})
+	var hooked []string
+	f.svc.OnRevoke(func(_ context.Context, id string) { hooked = append(hooked, id) })
 	if err := f.svc.Revoke(ctx, j.ID, "admin:test", "probing"); err != nil {
 		t.Fatal(err)
+	}
+	if len(hooked) != 1 || hooked[0] != j.ID {
+		t.Errorf("revoke hooks ran for %v", hooked)
 	}
 	if _, err := f.svc.Authenticate(ctx, tok, audit.InterfaceMCP, "10.0.0.1"); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("revoked session authenticated: %v", err)
