@@ -69,11 +69,11 @@ func TestFreshDatabase(t *testing.T) {
 		t.Errorf("lock file: %v", err)
 	}
 	got := strings.Join(tables(t, s.Read()), ",")
-	if want := "audit_events,jobs,schema_migrations,secrets,sessions"; got != want {
+	if want := "audit_events,jobs,master_keys,schema_migrations,secrets,sessions"; got != want {
 		t.Errorf("tables = %s, want %s", got, want)
 	}
-	if vs := versions(t, s.Read()); len(vs) != 1 || vs[0] != 1 {
-		t.Errorf("versions = %v, want [1]", vs)
+	if vs := versions(t, s.Read()); len(vs) != builtinCount(t) || vs[0] != 1 {
+		t.Errorf("versions = %v, want 1..%d", vs, builtinCount(t))
 	}
 	var mode string
 	if err := s.Read().QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil || mode != "wal" {
@@ -157,9 +157,18 @@ func TestReopenIsNoOp(t *testing.T) {
 	if before != after {
 		t.Errorf("migration 1 re-applied: %s then %s", before, after)
 	}
-	if vs := versions(t, s.Read()); len(vs) != 1 {
+	if vs := versions(t, s.Read()); len(vs) != builtinCount(t) {
 		t.Errorf("versions = %v", vs)
 	}
+}
+
+func builtinCount(t *testing.T) int {
+	t.Helper()
+	ms, err := loadMigrations(embedded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return len(ms)
 }
 
 func TestRefusesNewerDatabase(t *testing.T) {

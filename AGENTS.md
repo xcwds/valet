@@ -37,6 +37,10 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   and the database 0600; valetd refuses looser modes rather than fixing them silently.
   `Open` also takes an exclusive `flock` on `data_dir/valetd.lock`, so a second valetd on the
   same data directory exits with an error.
+- `internal/secrets`: Hekate. Envelope encryption (per-secret AES-256-GCM data key, wrapped by the
+  master key, secret name bound into both as additional data). `master_keys` holds a canary per key,
+  so valetd refuses a different key at start. Values come back as `secrets.Secret`, which prints
+  and encodes as `[redacted]` in every form; call `Reveal()` only where the value is used.
 - `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with

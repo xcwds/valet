@@ -6,7 +6,7 @@ policy, and logs every decision, including denied attempts.
 
 Named after the valet key, which starts the car but won't open the trunk or glovebox.
 
-> **Status:** proof of concept, early development: `valetd` starts, opens its database and answers `/healthz`, nothing more yet. The plan is the
+> **Status:** proof of concept, early development: `valetd` starts, opens its database, verifies its master key and answers `/healthz`, nothing more yet. The plan is the
 > [epic](https://github.com/xcwds/valet/issues/2); the design is
 > [RFC 0001](docs/rfc/0001-design.md).
 

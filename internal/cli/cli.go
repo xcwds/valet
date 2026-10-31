@@ -51,7 +51,9 @@ func Run(ctx context.Context, args []string, sys IO) int {
 		return daemonCmd(ctx, "valet daemon", rest, sys)
 	case "status":
 		return statusCmd(ctx, rest, sys)
-	case "job", "audit", "approve", "reject", "approvals", "session", "secrets", "policy":
+	case "secrets":
+		return secretsCmd(rest, sys)
+	case "job", "audit", "approve", "reject", "approvals", "session", "policy":
 		return notYet(cmd, sys)
 	case "help", "-h", "-help", "--help":
 		_, _ = fmt.Fprint(sys.Stdout, usageText)
@@ -77,7 +79,6 @@ var plannedIn = map[string]string{
 	"reject":    "#23",
 	"approvals": "#23",
 	"session":   "#19",
-	"secrets":   "#7",
 	"policy":    "#11",
 }
 
@@ -131,11 +132,12 @@ const usageText = `Usage: valet <command> [flags]
 Commands:
   version   Print the version
   status    Ask a running valetd whether it is healthy
+  secrets   Manage the secret store (init-key now; set/list/delete with #9)
   daemon    Run the broker daemon (same as running the binary as valetd)
   help      Show this help
 
 Coming with later issues: job, audit, approve, reject, approvals, session,
-secrets, policy.
+policy.
 
 Run 'valet <command> -h' for a command's flags.
 `

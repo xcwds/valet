@@ -16,6 +16,7 @@ go build -o bin/valet ./cmd/valet
 ln -sf valet bin/valetd
 bin/valet version
 cp valet.example.yaml valet.yaml   # set data_dir; for local runs, log.format: text
+bin/valet secrets init-key --out master.key   # and point master_key.file at it
 bin/valetd --config valet.yaml
 bin/valet status                   # in another terminal
 ```
