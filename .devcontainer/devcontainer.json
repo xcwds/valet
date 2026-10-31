@@ -1,0 +1,23 @@
+// Devcontainer for working on Valet itself. Not the agent devcontainer from
+// #20: this one has normal network access and your usual credentials.
+{
+  "name": "valet",
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.27.3",
+      "golangciLintVersion": "2.15.0"
+    }
+  },
+  "postCreateCommand": "go mod download && go install golang.org/x/vuln/cmd/govulncheck@v1.9.0",
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"],
+      "settings": {
+        "go.lintTool": "golangci-lint",
+        "go.lintFlags": ["--fast-only"],
+        "gopls": { "formatting.gofumpt": true }
+      }
+    }
+  }
+}

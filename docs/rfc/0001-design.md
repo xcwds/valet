@@ -60,7 +60,8 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
 13. **Separate from Agent Vault.** Borrow its ideas; don't fork it or build on it.
 14. **Go, one static binary, one image, SQLite by default** (see [Tech stack](#tech-stack)).
     Everything lives under the `xcwds` owner: repo `xcwds/valet`, Go module
-    `github.com/xcwds/valet`, image `ghcr.io/xcwds/valet`.
+    `github.com/xcwds/valet`, image `ghcr.io/xcwds/valet`. The binary is built from `cmd/valet`; run
+    as `valetd` (a symlink or copy with that name) or `valet daemon`, it is the daemon.
 15. **Myth names in docs, plain names in code.** Components carry Greek-myth names in docs, UI and
     log prefixes; code paths stay descriptive (see [Naming](#naming)).
 16. **Apache-2.0.** Permissive, with an explicit patent grant, as is usual for Go infrastructure
@@ -89,7 +90,7 @@ in docs, UI and log prefixes (`[themis] deny: …`); code paths stay descriptive
 | Audit log                       | Clio       | Muse of history; records what happened                                      |
 | Connector SDK                   | Hephaestus | The forge where new tools are made                                          |
 
-The CLI is `valet` and the daemon `valetd`. Laravel Valet, a macOS PHP dev tool, also ships a
+The CLI is `valet` and the daemon `valetd`, one binary under two names. Laravel Valet, a macOS PHP dev tool, also ships a
 `valet` CLI; if that collision matters, use `vlt` instead.
 
 ## Threat model

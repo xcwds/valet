@@ -20,15 +20,37 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   Each says what it depends on; don't start one before its dependencies have merged.
 - Work an issue at a time, one PR per issue unless the issue says otherwise.
 
-## What's where (planned)
+## What's where
 
-- `cmd/valetd`, `cmd/valet`: the daemon and the CLI (the same binary is fine if the setup issue
-  chooses so).
-- `internal/`: one package per component, named for what it does (`policy`, `audit`, `secrets`,
-  `jobs`, `mcp`, `gitproxy`, `egress`, `approval`, `connector`, `connector/github`, …).
+- `cmd/valet`: the one binary. `internal/cli` dispatches it: `valet …` is the CLI; run as `valetd`
+  (a symlink or copy with that name) or `valet daemon`, it is the daemon (RFC decision 14).
+- `internal/version`: the build's version, set with
+  `-ldflags "-X github.com/xcwds/valet/internal/version.Version=…"`.
+- `internal/` (planned): one package per component, named for what it does (`config`, `store`,
+  `secrets`, `audit`, `jobs`, `policy`, `connector`, `connector/github`, `mcp`, `gitproxy`,
+  `egress`, `approval`, …).
 - `deploy/`: Dockerfile, `compose.yaml` and the example agent devcontainer.
 - `e2e/`: the demo scenarios from the RFC, run against a fake upstream.
 - `docs/`: the RFC and operator guides.
+
+## Tooling
+
+- Go and golangci-lint versions are pinned in `go.mod` (`toolchain`), `mise.toml` and
+  `.github/workflows/ci.yml`; govulncheck in `ci.yml` and `.devcontainer/devcontainer.json`.
+  Renovate updates Go modules, `mise.toml` and action digests, but not the `version:` input of the
+  golangci-lint action or the `govulncheck@` version, so bump those by hand alongside `mise.toml`.
+- Lint config is `.golangci.yml` (golangci-lint v2). `golangci-lint fmt` applies gofumpt and
+  goimports.
+
+## Cloud containers
+
+- The preinstalled `golangci-lint` is built with an older Go and refuses this module. Install the
+  pinned one into the scratchpad and put it first on `PATH`:
+  ```sh
+  GOBIN="<scratchpad>/bin" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+  ```
+  (`go` downloads the toolchain from `go.mod` by itself.)
+- `govulncheck` can't reach `vuln.go.dev` through the proxy; rely on CI's run.
 
 ## Hard rules
 

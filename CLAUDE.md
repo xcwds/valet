@@ -6,12 +6,15 @@ policy and audits every decision. Plan: epic #2 with one milestone per phase (M0
 `docs/rfc/0001-design.md` (from the design doc in #1); follow its numbered decisions, and change
 the RFC in the same PR when a decision changes.
 
-Go, one module, one static binary (`valetd` daemon, `valet` CLI), SQLite by default.
+Go, one module (`github.com/xcwds/valet`), one static binary built from `cmd/valet`: it is the
+`valet` CLI, and the daemon when run as `valetd` or `valet daemon`. SQLite by default.
 
 - [AGENTS.md](AGENTS.md) collects the conventions and gotchas for agents working here; keep it in
   step with this file.
-- Before pushing: `go build ./... && go vet ./... && golangci-lint run && go test -race ./...`
-  (set up by the repo setup issue; until it lands there is no Go code to check).
+- Before pushing: `go mod tidy -diff && go build ./... && go vet ./... && golangci-lint run && go test -race ./...`.
+  CI also runs `govulncheck ./...` and a `CGO_ENABLED=0` static build.
+- In Claude Code cloud containers the preinstalled `golangci-lint` is too old for this module and
+  `vuln.go.dev` is blocked; see AGENTS.md (Cloud containers).
 - Never commit a secret, key or token, not even a test one that looks real. Tests generate keys at
   run time.
 - Core code (`internal/` outside `internal/connector/<name>`) never imports a specific connector or
