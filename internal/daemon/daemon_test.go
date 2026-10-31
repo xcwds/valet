@@ -207,3 +207,41 @@ func TestShutdownClosesIdleConnections(t *testing.T) {
 		t.Fatal("shutdown waited on an idle keep-alive connection")
 	}
 }
+
+func TestInFlightRequestFinishesDuringShutdown(t *testing.T) {
+	// A handler that respects its context must keep running after the stop
+	// signal, within the grace period.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	ctxErr := make(chan error, 1)
+	testAdminHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(entered)
+		<-release
+		ctxErr <- r.Context().Err()
+		_, _ = w.Write([]byte("done"))
+	})
+	t.Cleanup(func() { testAdminHandler = nil })
+
+	addrs, stop := start(t, testConfig(), io.Discard)
+	respc := make(chan int, 1)
+	go func() {
+		status, _ := get(t, "http://"+addrs.Admin+"/slow")
+		respc <- status
+	}()
+	<-entered
+
+	stopErr := make(chan error, 1)
+	go func() { stopErr <- stop() }() // what SIGTERM does
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+
+	if err := <-ctxErr; err != nil {
+		t.Errorf("request context was canceled by the stop signal: %v", err)
+	}
+	if status := <-respc; status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+	if err := <-stopErr; err != nil {
+		t.Fatal(err)
+	}
+}

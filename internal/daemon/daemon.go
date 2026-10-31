@@ -51,6 +51,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, ready func(A
 		{"egress", cfg.Listen.Egress, egressServer()},
 	}
 
+	// Requests get a base context that survives the stop signal, so the
+	// shutdown grace period lets in-flight work finish. It is canceled when
+	// that grace period runs out, or when Run returns.
+	baseCtx, cancelBase := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelBase()
+
 	var lns []listener
 	closeAll := func() {
 		for _, l := range lns {
@@ -65,7 +71,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, ready func(A
 			return fmt.Errorf("listen %s on %s: %w", s.name, s.addr, err)
 		}
 		s.srv.ErrorLog = slog.NewLogLogger(log.With("listener", s.name).Handler(), slog.LevelWarn)
-		s.srv.BaseContext = func(net.Listener) context.Context { return ctx }
+		s.srv.BaseContext = func(net.Listener) context.Context { return baseCtx }
 		lns = append(lns, listener{name: s.name, ln: ln, srv: s.srv})
 	}
 
@@ -94,8 +100,10 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, ready func(A
 		log.Error("listener failed, stopping", "err", runErr)
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ShutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(baseCtx, ShutdownTimeout)
 	defer cancel()
+	stop := context.AfterFunc(shutdownCtx, cancelBase) // grace period over: cancel stragglers
+	defer stop()
 	for _, l := range lns {
 		if err := l.srv.Shutdown(shutdownCtx); err != nil {
 			log.Warn("shutdown did not finish cleanly", "listener", l.name, "err", err)
@@ -106,6 +114,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, ready func(A
 	return runErr
 }
 
+// testAdminHandler, when set by a test, replaces the admin routes.
+var testAdminHandler http.Handler
+
 // adminServer serves the operator API. For now: /healthz.
 func adminServer() *http.Server {
 	mux := http.NewServeMux()
@@ -113,8 +124,12 @@ func adminServer() *http.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "version": version.String()})
 	})
+	var h http.Handler = mux
+	if testAdminHandler != nil {
+		h = testAdminHandler
+	}
 	return &http.Server{
-		Handler:           mux,
+		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -135,12 +150,13 @@ func agentServer() *http.Server {
 	}
 }
 
-// egressServer will be the registry CONNECT proxy (#18); tunnels are long
-// lived, so only the header timeout applies.
+// egressServer will be the registry CONNECT proxy (#18). Tunnels are long
+// lived hijacked connections, so only the header and idle timeouts apply.
 func egressServer() *http.Server {
 	return &http.Server{
 		Handler:           refuse("egress is not enabled yet"),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
 }
