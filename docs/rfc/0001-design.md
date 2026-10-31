@@ -335,12 +335,14 @@ ports.
 3. `valet session login` exchanges the code for the job's session token on the agent port. It
    retries network errors with the same code, and deletes the code file only after a response
    arrives.
-4. **First use** creates the job's one session, and is audited.
+4. **First use** creates the job's one session, and is audited. It is atomic: if two requests with
+   the same code race, exactly one creates the session and the other is answered as a replay.
 5. **Repeat window.** For a short time after first use (default 60 s, capped at 5 min), the same
    code gets exactly the same response: the same token and expiry, with no new session, no alert
-   and no deny counted. Each replay is audited as one. The issued token is held in memory only for
-   the window, so the database still stores only its hash; a restart ends the window early, which
-   fails safe. Replays stop if the job is revoked, and are capped per code.
+   and no deny counted. Each replay is audited as a replay. The issued token is held in memory only
+   for the window, so the database still stores only its hash. A restart ends the window early: a
+   retry after it is denied and alerted, a known, rare false positive that fails safe. Replays stop
+   if the job is revoked, and are capped per code.
 6. **Any other reuse** (after the window or the cap, an expired code, a revoked job) is denied,
    audited and alerted. A job gets a second session only when the operator re-enrolls it, which
    revokes the first.
