@@ -1,0 +1,22 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Local state and secrets: never commit these
+/data/
+*.db
+*.db-*
+/secrets/
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
