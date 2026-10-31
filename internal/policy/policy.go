@@ -333,6 +333,23 @@ func eval(ctx context.Context, prg cel.Program, vars map[string]any) (bool, erro
 	return b, nil
 }
 
+// MayAllow reports whether role has a rule that could allow action (or ask
+// for approval), ignoring conditions. The MCP endpoint lists only such
+// actions, so an agent isn't offered tools that always deny; calling one it
+// wasn't offered still goes through policy, and is denied and audited.
+func (p *Policy) MayAllow(role, action string) bool {
+	r, ok := p.roles[role]
+	if !ok {
+		return false
+	}
+	for _, ru := range r.rules {
+		if ru.match.MatchString(action) && ru.effect != pipeline.Deny {
+			return true
+		}
+	}
+	return false
+}
+
 // Unmatched lists rule patterns that match none of the given action names,
 // for a start-up warning: a typo in a pattern silently denies.
 func (p *Policy) Unmatched(actions []string) []string {

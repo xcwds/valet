@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -137,9 +138,10 @@ func TestJobLifecycleThroughTheCLI(t *testing.T) {
 		t.Fatalf("show: %d %q", code, out)
 	}
 
-	// The agent port knows the session; there are no endpoints yet, so 403.
-	if s := status(t, "GET", v.agent+"/mcp", "Bearer "+token); s != http.StatusForbidden {
-		t.Errorf("agent with a valid session: %d, want 403", s)
+	// The agent port knows the session: it reaches MCP, which takes only
+	// POST (405 rather than 401).
+	if s := status(t, "GET", v.agent+"/mcp", "Bearer "+token); s != http.StatusMethodNotAllowed {
+		t.Errorf("agent with a valid session: %d, want 405", s)
 	}
 	// Flags after the positional argument work too.
 	if code, _, errOut := v.cli(t, "", "job", "revoke", id, "--reason", "test"); code != ExitOK {
@@ -182,7 +184,7 @@ func TestTokensStayOnTheirPort(t *testing.T) {
 		{"admin API, basic auth", "GET", v.admin + "/api/jobs", "Basic " + admin, 401},
 		{"agent, admin token", "GET", v.agent + "/mcp", "Bearer " + admin, 401},
 		{"agent, no token", "GET", v.agent + "/mcp", "", 401},
-		{"agent, session token", "GET", v.agent + "/mcp", "Bearer " + created.Token, 403},
+		{"agent, session token", "GET", v.agent + "/mcp", "Bearer " + created.Token, 405}, // past auth; MCP is POST-only
 		{"health needs no token", "GET", v.admin + "/healthz", "", 200},
 	}
 	for _, c := range cases {
@@ -199,8 +201,8 @@ func TestTokensStayOnTheirPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("git basic auth with a session token: %d, want 403", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound { // past auth; the git proxy is #17
+		t.Errorf("git basic auth with a session token: %d, want 404", resp.StatusCode)
 	}
 
 	_, out, _ = v.cli(t, "", "audit", "tail", "--decision", "deny", "-n", "100")
@@ -292,5 +294,36 @@ func TestAgentPortThrottlesFloods(t *testing.T) {
 	_, out, _ := v.cli(t, "", "audit", "tail", "--decision", "deny", "-n", "100")
 	if n := strings.Count(out, "session.authenticate"); n != 11 {
 		t.Errorf("%d audited failures for 15 attempts, want 11", n)
+	}
+}
+
+// An MCP client reaches the tools through a real valetd, with nothing but
+// its session token. No connectors are configured, so the list is empty and
+// any call is denied and audited.
+func TestMCPThroughValetd(t *testing.T) {
+	v := startValetd(t)
+	_, out, _ := v.cli(t, "", "job", "create", "--role", "reviewer", "--repo", "xcwds/site", "--json")
+	var created struct{ Token string }
+	_ = json.Unmarshal([]byte(out), &created)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"github_pr_merge","arguments":{"repo":"xcwds/site","number":1}}}`
+	req, _ := http.NewRequestWithContext(context.Background(), "POST", v.agent+"/mcp", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+created.Token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Mcp-Protocol-Version", "2025-06-18")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `"isError":true`) || !strings.Contains(string(b), "unknown action") {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	_, out, _ = v.cli(t, "", "audit", "tail", "--decision", "deny")
+	// No connector offers it, so the record names the tool as called.
+	if !strings.Contains(out, `"action":"github_pr_merge"`) || !strings.Contains(out, `"interface":"mcp"`) {
+		t.Errorf("the call was not audited: %s", out)
 	}
 }

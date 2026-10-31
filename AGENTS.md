@@ -82,6 +82,12 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   audit the decision → mint (cached) → execute → audit the result. Anything but an allow returns
   `*pipeline.Denied` before minting; `require_approval` fails closed until #23. Until #11 valetd
   uses `pipeline.DenyAll`.
+- `internal/mcp`: Iris, MCP at `/mcp` on the agent port (`modelcontextprotocol/go-sdk`, stateless
+  streamable HTTP, behind `jobs.RequireSession`). Each POST builds a server for that request's
+  session; tools are actions with `.` → `_`, offered when the role's policy could allow them
+  (`policy.MayAllow`); every `tools/call` (offered or not) goes through the pipeline via receiving
+  middleware. Denials name the rule; other failures return only the upstream status. See
+  `docs/mcp.md`.
 - `internal/policy`: Themis. Roles from YAML (`policies/roles.yaml` is built in), CEL conditions
   compiled and type-checked at load (`cel.dev/cel-go`; `job` and `action` are typed, `params` is
   dynamic), first match wins, no match or any evaluation error denies, cost limit and timeout per

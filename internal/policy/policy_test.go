@@ -284,3 +284,22 @@ func TestActionVariables(t *testing.T) {
 		t.Errorf("%+v", d)
 	}
 }
+
+func TestMayAllow(t *testing.T) {
+	p := defaults(t)
+	cases := map[string]bool{
+		"reviewer github.pr.comment":       true,
+		"reviewer github.pr.review.submit": true,
+		"reviewer github.pr.merge":         false, // only a deny rule
+		"reviewer git.push":                false,
+		"implementer github.pr.merge":      true, // require_approval
+		"triage github.pr.read":            false,
+		"nobody github.pr.read":            false,
+	}
+	for k, want := range cases {
+		role, action, _ := strings.Cut(k, " ")
+		if got := p.MayAllow(role, action); got != want {
+			t.Errorf("MayAllow(%s) = %v, want %v", k, got, want)
+		}
+	}
+}
