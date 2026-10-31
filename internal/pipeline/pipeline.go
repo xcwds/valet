@@ -96,15 +96,21 @@ func (pl *Pipeline) Run(ctx context.Context, p jobs.Principal, iface, action str
 
 	act, spec, params, err := pl.reg.Resolve(action, raw)
 	if err != nil {
-		reason := "unknown action"
+		reason, recorded := "unknown action", "unknown action"
 		if errors.Is(err, connector.ErrInvalidParams) {
-			reason = err.Error()
+			// The validator's message can quote the offending value, so
+			// it goes to the agent (who sent it) but not into the audit
+			// log, which keeps the params themselves, redacted.
+			reason, recorded = err.Error(), "invalid params"
 		}
 		ev.Params = paramsForAudit(raw)
+		if spec, ok := pl.reg.Spec(action); ok {
+			ev.Sensitive = spec.Sensitive
+		}
 		if !actionNameOK(action) {
 			ev.Action, ev.Params = "invalid", map[string]any{"requested": truncate(action, 128)}
 		}
-		return connector.Result{}, pl.deny(ctx, ev, "", reason)
+		return connector.Result{}, pl.denyAs(ctx, ev, "", reason, recorded)
 	}
 	ev.Params, ev.Sensitive = params, spec.Sensitive
 
@@ -152,7 +158,13 @@ func (pl *Pipeline) Run(ctx context.Context, p jobs.Principal, iface, action str
 // deny records a refusal and returns it. If the refusal can't be recorded,
 // the request still fails, with the audit error.
 func (pl *Pipeline) deny(ctx context.Context, ev audit.Event, rule, reason string) error {
-	ev.Decision, ev.Rule, ev.Error = audit.Deny, rule, reason
+	return pl.denyAs(ctx, ev, rule, reason, reason)
+}
+
+// denyAs is deny with a different reason for the audit log than for the
+// agent.
+func (pl *Pipeline) denyAs(ctx context.Context, ev audit.Event, rule, reason, recorded string) error {
+	ev.Decision, ev.Rule, ev.Error = audit.Deny, rule, recorded
 	if _, err := pl.audit.Append(ctx, ev); err != nil {
 		return errors.Join(&Denied{Rule: rule, Reason: reason}, err)
 	}

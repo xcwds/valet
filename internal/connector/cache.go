@@ -32,12 +32,15 @@ type cacheEntry struct {
 type Cache struct {
 	mu      sync.Mutex
 	entries map[cacheKey]*cacheEntry
-	now     func() time.Time
+	// ended remembers dropped jobs until they would have expired, so a
+	// request already past authentication can't mint for a revoked job.
+	ended map[string]time.Time
+	now   func() time.Time
 }
 
 // NewCache returns an empty cache.
 func NewCache() *Cache {
-	return &Cache{entries: map[cacheKey]*cacheEntry{}, now: time.Now}
+	return &Cache{entries: map[cacheKey]*cacheEntry{}, ended: map[string]time.Time{}, now: time.Now}
 }
 
 // Get returns a credential for job from c, minting one if none is cached or
@@ -45,6 +48,10 @@ func NewCache() *Cache {
 func (k *Cache) Get(ctx context.Context, c Connector, job jobs.Job) (Credential, error) {
 	key := cacheKey{job.ID, c.Name()}
 	k.mu.Lock()
+	if _, ended := k.ended[job.ID]; ended {
+		k.mu.Unlock()
+		return Credential{}, ErrJobEnded
+	}
 	e, ok := k.entries[key]
 	if !ok {
 		e = &cacheEntry{}
@@ -85,10 +92,12 @@ func (k *Cache) Get(ctx context.Context, c Connector, job jobs.Job) (Credential,
 	return cred, nil
 }
 
-// DropJob forgets every credential minted for jobID and revokes each
-// upstream where the connector supports it. reg finds the connectors.
+// DropJob forgets every credential minted for jobID, revokes each upstream
+// where the connector supports it, and refuses to mint for the job again.
+// reg finds the connectors.
 func (k *Cache) DropJob(ctx context.Context, reg *Registry, jobID string) error {
 	k.mu.Lock()
+	k.ended[jobID] = k.now().Add(jobs.MaxTTL) // outlives any job
 	var dropped []struct {
 		ns string
 		e  *cacheEntry
@@ -126,12 +135,18 @@ func (k *Cache) DropJob(ctx context.Context, reg *Registry, jobID string) error 
 	return errors.Join(errs...)
 }
 
-// Sweep forgets credentials whose job or credential has expired. They are
-// already unusable; this only bounds memory. valetd runs it periodically.
+// Sweep forgets credentials whose job or credential has expired, and ended
+// jobs that could no longer be live. They are already unusable; this only
+// bounds memory. valetd runs it periodically.
 func (k *Cache) Sweep() int {
 	now := k.now()
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	for id, until := range k.ended {
+		if !now.Before(until) {
+			delete(k.ended, id)
+		}
+	}
 	n := 0
 	for key, e := range k.entries {
 		if !e.mu.TryLock() {

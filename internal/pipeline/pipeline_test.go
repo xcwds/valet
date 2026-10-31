@@ -147,6 +147,30 @@ func TestRefusalsNeverMint(t *testing.T) {
 	}
 }
 
+func TestValidationErrorsKeepValuesOutOfTheAudit(t *testing.T) {
+	f := newFixture(t, allowEcho)
+	secret := "sk-" + strings.Repeat("q", 120) // too long for message's maxLength
+	_, err := f.run("fake.echo", `{"message":"`+secret+`","note":"also-secret"}`)
+	var denied *Denied
+	if !errors.As(err, &denied) || !strings.Contains(denied.Reason, "maxLength") {
+		t.Fatalf("err = %v; the agent should get the detail", err)
+	}
+	recs := f.trail(t)
+	if len(recs) != 1 {
+		t.Fatalf("audit = %+v", recs)
+	}
+	r := recs[0]
+	if r.Error != "invalid params" {
+		t.Errorf("audit error = %q, want the generic reason", r.Error)
+	}
+	if strings.Contains(r.Error+string(r.Params), "also-secret") {
+		t.Errorf("a sensitive param reached the audit record: %s / %s", r.Error, r.Params)
+	}
+	if strings.Contains(r.Error, secret) {
+		t.Error("the offending value reached the audit error")
+	}
+}
+
 func TestPolicySeesValidatedParams(t *testing.T) {
 	var seen Request
 	f := newFixture(t, policyFunc(func(r Request) (Decision, error) {

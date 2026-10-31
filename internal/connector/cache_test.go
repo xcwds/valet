@@ -108,6 +108,24 @@ func TestSweep(t *testing.T) {
 	}
 }
 
+func TestNoMintAfterDrop(t *testing.T) {
+	// A request authenticated before the revocation reaches the cache after
+	// it: it must not mint for the revoked job.
+	f := &fake.Connector{}
+	reg, _ := connector.NewRegistry(f)
+	c := connector.NewCache()
+	j := job("job-aaaaaaaa", time.Hour)
+	if err := c.DropJob(ctx, reg, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Get(ctx, f, j); !errors.Is(err, connector.ErrJobEnded) {
+		t.Fatalf("Get after drop = %v, want ErrJobEnded", err)
+	}
+	if mints, _, _ := f.Snapshot(); len(mints) != 0 {
+		t.Fatalf("minted for a revoked job: %v", mints)
+	}
+}
+
 func TestDropDuringMint(t *testing.T) {
 	f := &fake.Connector{MintDelay: 100 * time.Millisecond}
 	reg, _ := connector.NewRegistry(f)
