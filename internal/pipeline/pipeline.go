@@ -45,6 +45,10 @@ type Decision struct {
 	Rule   string // which rule decided, for the audit log and the agent
 	Reason string
 	Alert  bool // ask for an alert (#15)
+	// Detail explains an evaluation error for an operator debugging a rule
+	// (valet policy check). It can quote params, so the pipeline neither
+	// returns nor audits it.
+	Detail string
 }
 
 // Policy decides on requests (Themis, #11).

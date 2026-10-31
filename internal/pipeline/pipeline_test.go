@@ -171,6 +171,19 @@ func TestValidationErrorsKeepValuesOutOfTheAudit(t *testing.T) {
 	}
 }
 
+func TestPolicyDetailIsNeitherReturnedNorAudited(t *testing.T) {
+	f := newFixture(t, policyFunc(func(Request) (Decision, error) {
+		return Decision{Effect: Deny, Rule: "r", Reason: "condition could not be evaluated", Detail: "quoted ghp_SECRET"}, nil
+	}))
+	_, err := f.run("fake.echo", `{"message":"hi"}`)
+	if err == nil || strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("err = %v", err)
+	}
+	if recs := f.trail(t); strings.Contains(recs[0].Error+string(recs[0].Params), "SECRET") {
+		t.Errorf("detail audited: %+v", recs[0])
+	}
+}
+
 func TestPolicySeesValidatedParams(t *testing.T) {
 	var seen Request
 	f := newFixture(t, policyFunc(func(r Request) (Decision, error) {

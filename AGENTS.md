@@ -74,6 +74,10 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   audit the decision → mint (cached) → execute → audit the result. Anything but an allow returns
   `*pipeline.Denied` before minting; `require_approval` fails closed until #23. Until #11 valetd
   uses `pipeline.DenyAll`.
+- `internal/policy`: Themis. Roles from YAML (`policies/roles.yaml` is built in), CEL conditions
+  compiled and type-checked at load (`cel.dev/cel-go`; `job` and `action` are typed, `params` is
+  dynamic), first match wins, no match or any evaluation error denies, cost limit and timeout per
+  condition. Implements `pipeline.Policy`; `jobs.Service.RequireRoles` refuses undefined roles.
 - `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with

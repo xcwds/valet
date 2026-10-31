@@ -6,7 +6,7 @@ policy, and logs every decision, including denied attempts.
 
 Named after the valet key, which starts the car but won't open the trunk or glovebox.
 
-> **Status:** proof of concept, early development: M0 is complete: `valet job create` issues a job and its session token, every action is audited, and agents' tokens are checked on the agent port, which has no endpoints yet. The plan is the
+> **Status:** proof of concept, early development: M0 is complete: `valet job create` issues a job and its session token, every action is audited, and agents' tokens are checked on the agent port, which has no endpoints yet. M1 is under way: the connector pipeline and the policy engine are in. The plan is the
 > [epic](https://github.com/xcwds/valet/issues/2); the design is
 > [RFC 0001](docs/rfc/0001-design.md).
 

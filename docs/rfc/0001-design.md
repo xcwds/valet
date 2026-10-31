@@ -242,6 +242,17 @@ rules:
     decision: require_approval
 ```
 
+**Patterns and evaluation.** In an action pattern, `*` matches within one dot-separated segment,
+`**` (a whole segment) matches one or more segments, and `{a,b}` matches either word. Conditions see
+`job` (`id`, `role`, `repos`, `branch_pattern`, `created_by`, `expires_at`) and `action` (`name`,
+`connector`, `risk`, `interface`) as typed objects, so a misspelt field fails at load, and `params` as
+the action's validated params. Each condition has a cost limit and a 100 ms timeout. An error in a
+rule whose pattern matches is a deny for that rule; it never falls through to a later one. CEL's
+equality is heterogeneous (`5 == 'x'` is false, not an error), which is safe here only because params
+are validated against the action's schema before policy sees them. The default roles live in
+`policies/roles.yaml` and are built in; `policies:` in the config replaces them. `valet policy check`
+tries a decision offline.
+
 **Approvals.** A `require_approval` decision parks the request, returns a pending ID to the agent,
 and pushes a notification (ntfy webhook first). The operator approves or rejects with
 `valet approve <id>` or in the web UI. The agent's call blocks up to a timeout, then fails closed.

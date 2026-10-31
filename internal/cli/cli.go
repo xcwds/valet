@@ -63,7 +63,9 @@ func Run(ctx context.Context, args []string, sys IO) int {
 		return jobCmd(ctx, rest, sys)
 	case "admin":
 		return adminCmd(ctx, rest, sys)
-	case "approve", "reject", "approvals", "session", "policy":
+	case "policy":
+		return policyCmd(ctx, rest, sys)
+	case "approve", "reject", "approvals", "session":
 		return notYet(cmd, sys)
 	case "help", "-h", "-help", "--help":
 		_, _ = fmt.Fprint(sys.Stdout, usageText)
@@ -87,7 +89,6 @@ var plannedIn = map[string]string{
 	"reject":    "#23",
 	"approvals": "#23",
 	"session":   "#19",
-	"policy":    "#11",
 }
 
 func notYet(cmd string, sys IO) int {
@@ -144,10 +145,11 @@ Commands:
   secrets   Manage the secret store (init-key, set, list, delete)
   audit     Read and verify the audit log (tail, verify)
   admin     Recover operator access (reset-token)
+  policy    Try a policy decision offline (check)
   daemon    Run the broker daemon (same as running the binary as valetd)
   help      Show this help
 
-Coming with later issues: approve, reject, approvals, session, policy.
+Coming with later issues: approve, reject, approvals, session.
 
 Run 'valet <command> -h' for a command's flags.
 `
