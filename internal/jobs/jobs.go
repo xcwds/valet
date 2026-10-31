@@ -100,6 +100,13 @@ type Service struct {
 	audit    *audit.Log
 	throttle *throttle.Throttle
 	now      func() time.Time
+	onRevoke []func(ctx context.Context, jobID string)
+}
+
+// OnRevoke registers f to run after a job is revoked, e.g. to drop and revoke
+// its upstream credentials. Register before serving requests.
+func (s *Service) OnRevoke(f func(ctx context.Context, jobID string)) {
+	s.onRevoke = append(s.onRevoke, f)
 }
 
 // NewService returns a Service.
@@ -349,6 +356,9 @@ func (s *Service) Revoke(ctx context.Context, id, by, reason string) error {
 		return err
 	}
 	s.audit.Emit(ctx, rec)
+	for _, f := range s.onRevoke {
+		f(context.WithoutCancel(ctx), id)
+	}
 	return nil
 }
 

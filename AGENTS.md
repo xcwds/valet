@@ -64,6 +64,16 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   no cookies. It refuses non-canonical paths so IDs and secret names mean exactly what was sent.
   The CLI reads the token from `--token-file`, `$VALET_ADMIN_TOKEN` or `$VALET_DATA_DIR/admin.token`,
   never from a flag value.
+- `internal/connector`: Hephaestus. The `Connector` interface (`Name`, `Actions`, `Mint`, `Execute`;
+  optional `Classifier` and `Revoker`), `ActionSpec` with a JSON Schema built by `connector.Object`
+  (closed: `additionalProperties: false` is required), the `Registry` that checks catalogs at start
+  and validates params, and the per-job credential `Cache`. In-tree connectors go in
+  `internal/connector/<name>/` and are listed in `internal/connector/builtin`; a test fails if any
+  other non-test code imports a specific connector. `internal/connector/fake` is for tests.
+- `internal/pipeline`: the one path every agent request takes: resolve and validate → policy →
+  audit the decision → mint (cached) → execute → audit the result. Anything but an allow returns
+  `*pipeline.Denied` before minting; `require_approval` fails closed until #23. Until #11 valetd
+  uses `pipeline.DenyAll`.
 - `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with
