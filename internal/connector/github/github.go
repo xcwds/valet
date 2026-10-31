@@ -83,14 +83,6 @@ func New(cfg Config, s SecretGetter) (*Connector, error) {
 // Name implements connector.Connector.
 func (*Connector) Name() string { return Name }
 
-// Actions implements connector.Connector. The v1 catalog is #13.
-func (*Connector) Actions() []connector.ActionSpec { return nil }
-
-// Execute implements connector.Connector.
-func (*Connector) Execute(context.Context, connector.Credential, jobs.Job, connector.Action) (connector.Result, error) {
-	return connector.Result{}, errors.New("github: no actions yet")
-}
-
 // Mint implements connector.Connector: an installation token for exactly the
 // job's repositories, with the job's role's permissions.
 func (c *Connector) Mint(ctx context.Context, job jobs.Job) (connector.Credential, error) {
@@ -290,37 +282,12 @@ type APIError struct {
 func (e *APIError) Error() string { return fmt.Sprintf("github: HTTP %d: %s", e.Status, e.Message) }
 
 func (c *Connector) call(ctx context.Context, method, path, auth string, body []byte, want int, out any) error {
-	var rd io.Reader
-	if body != nil {
-		rd = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.cfg.APIURL+path, rd)
+	status, data, _, err := c.send(ctx, method, path, auth, "application/vnd.github+json", body, 1<<20)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", auth)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("User-Agent", "valet")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("github: %s %s: %w", method, path, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	c.noteRateLimit(resp)
-	if resp.StatusCode != want {
-		var e struct {
-			Message string `json:"message"`
-		}
-		_ = json.Unmarshal(data, &e)
-		if e.Message == "" {
-			e.Message = http.StatusText(resp.StatusCode)
-		}
-		return &APIError{Status: resp.StatusCode, Message: e.Message}
+	if status != want {
+		return apiError(status, data)
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
@@ -328,6 +295,48 @@ func (c *Connector) call(ctx context.Context, method, path, auth string, body []
 		}
 	}
 	return nil
+}
+
+func apiError(status int, data []byte) *APIError {
+	var e struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(data, &e)
+	if e.Message == "" {
+		e.Message = http.StatusText(status)
+	}
+	return &APIError{Status: status, Message: e.Message}
+}
+
+// send makes one request and returns the status and up to limit bytes of
+// the body; truncated reports whether there was more.
+func (c *Connector) send(ctx context.Context, method, path, auth, accept string, body []byte, limit int64) (status int, data []byte, truncated bool, err error) {
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.cfg.APIURL+path, rd)
+	if err != nil {
+		return 0, nil, false, err
+	}
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Accept", accept)
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "valet")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, false, fmt.Errorf("github: %s %s: %w", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ = io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if int64(len(data)) > limit {
+		data, truncated = data[:limit], true
+	}
+	c.noteRateLimit(resp)
+	return resp.StatusCode, data, truncated, nil
 }
 
 // noteRateLimit pauses every mint when GitHub says to: Retry-After on a 403
