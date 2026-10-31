@@ -15,6 +15,7 @@ import (
 	"github.com/xcwds/valet/internal/daemon"
 	"github.com/xcwds/valet/internal/jobs"
 	"github.com/xcwds/valet/internal/logging"
+	"github.com/xcwds/valet/internal/mcp"
 	"github.com/xcwds/valet/internal/operator"
 	"github.com/xcwds/valet/internal/pipeline"
 	"github.com/xcwds/valet/internal/policy"
@@ -148,7 +149,19 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		themis.Info("rules that match no registered action (a typo in a pattern denies silently)", "rules", un)
 	}
 	jobSvc.RequireRoles(pol.HasRole)
-	_ = pipeline.New(registry, pol, auditLog, creds, log)
+	pl := pipeline.New(registry, pol, auditLog, creds, log)
+
+	// Iris: MCP at /mcp on the agent port. The git proxy (#17) joins it.
+	iris, err := mcp.New(registry, pl, pol, log)
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	agentMux := http.NewServeMux()
+	agentMux.Handle("/mcp", iris.Handler())
+	agentMux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found: this port serves /mcp", http.StatusNotFound)
+	})
 
 	if _, err := auditLog.Append(ctx, audit.Event{
 		Interface: audit.InterfaceSystem, Action: "valetd.start", Decision: audit.Info,
@@ -163,10 +176,8 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		Admin: adminapi.Handler(adminapi.Deps{
 			Jobs: jobSvc, Operator: ops, Secrets: secretStore, AuditDB: st.Read(), Log: log,
 		}),
-		// Authenticated agents still get 403 until MCP (#14) and git (#17) land.
-		Agent: jobSvc.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "no agent endpoints are enabled yet", http.StatusForbidden)
-		})),
+		// Every request on the agent port carries a session token.
+		Agent: jobSvc.RequireSession(agentMux),
 	})
 	stopEvent := audit.Event{Interface: audit.InterfaceSystem, Action: "valetd.stop", Decision: audit.Info}
 	if runErr != nil {
