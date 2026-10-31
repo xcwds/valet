@@ -28,6 +28,8 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Keyed on go.mod until the module has dependencies and a go.sum.
+          cache-dependency-path: go.mod
 
       - name: go.mod and go.sum are tidy
         run: go mod tidy -diff
@@ -65,6 +67,8 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Keyed on go.mod until the module has dependencies and a go.sum.
+          cache-dependency-path: go.mod
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -85,6 +89,8 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Keyed on go.mod until the module has dependencies and a go.sum.
+          cache-dependency-path: go.mod
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
