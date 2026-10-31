@@ -3,12 +3,16 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 
+	"github.com/xcwds/valet/internal/adminapi"
 	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/config"
 	"github.com/xcwds/valet/internal/daemon"
+	"github.com/xcwds/valet/internal/jobs"
 	"github.com/xcwds/valet/internal/logging"
+	"github.com/xcwds/valet/internal/operator"
 	"github.com/xcwds/valet/internal/secrets"
 	"github.com/xcwds/valet/internal/store"
 	"github.com/xcwds/valet/internal/version"
@@ -87,13 +91,22 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	auditLog := audit.New(st, log)
 	logging.For(log, logging.Clio).Info("audit log verified", "events", res.Count)
 
-	// Hekate: proves the key matches this database before anything runs.
-	// Connectors (#10) get the store from here.
-	if _, err := secrets.Open(ctx, st, masterKey, auditLog); err != nil {
+	secretStore, err := secrets.Open(ctx, st, masterKey, auditLog)
+	if err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
 	}
 	logging.For(log, logging.Hekate).Info("master key verified", "key_id", masterKey.ID())
+
+	// Operators: make sure there is an admin token to get in with.
+	ops := operator.NewService(st, auditLog)
+	if path, err := ops.Bootstrap(ctx, cfg.DataDir); err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	} else if path != "" {
+		log.Info("created an admin token; the CLI reads it from this file", "path", path)
+	}
+	jobSvc := jobs.NewService(st, auditLog)
 
 	if _, err := auditLog.Append(ctx, audit.Event{
 		Interface: audit.InterfaceSystem, Action: "valetd.start", Decision: audit.Info,
@@ -103,7 +116,16 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		return ExitError
 	}
 
-	runErr := daemon.Run(ctx, cfg, log, daemon.Options{Health: st.Ping})
+	runErr := daemon.Run(ctx, cfg, log, daemon.Options{
+		Health: st.Ping,
+		Admin: adminapi.Handler(adminapi.Deps{
+			Jobs: jobSvc, Operator: ops, Secrets: secretStore, AuditDB: st.Read(), Log: log,
+		}),
+		// Authenticated agents still get 403 until MCP (#14) and git (#17) land.
+		Agent: jobSvc.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "no agent endpoints are enabled yet", http.StatusForbidden)
+		})),
+	})
 	stopEvent := audit.Event{Interface: audit.InterfaceSystem, Action: "valetd.stop", Decision: audit.Info}
 	if runErr != nil {
 		stopEvent.Error = runErr.Error()

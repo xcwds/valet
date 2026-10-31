@@ -55,6 +55,12 @@ jobs:
           VALET_MASTER_KEY=$(bin/valet secrets init-key) VALET_DATA_DIR=/tmp/valet VALET_ADMIN_ADDR=127.0.0.1:14400 bin/valetd &
           for i in $(seq 50); do bin/valet status && break; sleep 0.1; done
           bin/valet status
+          # M0 exit: `valet job create` returns a token and the create is audited.
+          export VALET_DATA_DIR=/tmp/valet
+          bin/valet job create --role reviewer --repo xcwds/site | tee /tmp/job.txt
+          grep -q '^token: *vlt_sess_' /tmp/job.txt
+          bin/valet audit tail | grep -q '"action":"job.create"'
+          bin/valet audit verify
           kill -TERM %1
           wait %1
 

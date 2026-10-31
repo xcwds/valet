@@ -51,17 +51,18 @@ func TestInitKeyFile(t *testing.T) {
 	}
 }
 
-func TestSecretsSubcommands(t *testing.T) {
-	for _, sub := range []string{"set", "list", "delete"} {
-		code, _, stderr := run(t, context.Background(), nil, "valet", "secrets", sub)
-		if code != ExitError || !strings.Contains(stderr, "#9") {
-			t.Errorf("secrets %s: code %d, stderr %q", sub, code, stderr)
-		}
-	}
+func TestSecretsSubcommandUsage(t *testing.T) {
 	if code, _, _ := run(t, context.Background(), nil, "valet", "secrets"); code != ExitUsage {
 		t.Errorf("bare secrets: code %d", code)
 	}
 	if code, _, _ := run(t, context.Background(), nil, "valet", "secrets", "nope"); code != ExitUsage {
 		t.Errorf("unknown subcommand: code %d", code)
+	}
+	if code, _, _ := run(t, context.Background(), nil, "valet", "secrets", "set"); code != ExitUsage {
+		t.Errorf("set without a name: code %d", code)
+	}
+	code, _, stderr := run(t, context.Background(), nil, "valet", "secrets", "list")
+	if code != ExitError || !strings.Contains(stderr, "no admin token") {
+		t.Errorf("list without a token: code %d, stderr %q", code, stderr)
 	}
 }

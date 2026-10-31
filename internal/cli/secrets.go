@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,9 +10,9 @@ import (
 	"github.com/xcwds/valet/internal/secrets"
 )
 
-// secretsCmd: valet secrets init-key [--out FILE]. Setting, listing and
-// deleting secrets go through the admin API, which needs operator auth (#9).
-func secretsCmd(args []string, sys IO) int {
+// secretsCmd: valet secrets init-key|set|list|delete. init-key works
+// offline; the others go through the admin API.
+func secretsCmd(ctx context.Context, args []string, sys IO) int {
 	if len(args) == 0 {
 		_, _ = fmt.Fprint(sys.Stderr, secretsUsage)
 		return ExitUsage
@@ -19,9 +20,12 @@ func secretsCmd(args []string, sys IO) int {
 	switch args[0] {
 	case "init-key":
 		return initKeyCmd(args[1:], sys)
-	case "set", "list", "delete":
-		_, _ = fmt.Fprintf(sys.Stderr, "valet secrets %s: not implemented yet; it needs the admin API's operator auth (#9)\n", args[0])
-		return ExitError
+	case "set":
+		return secretsSetCmd(ctx, args[1:], sys)
+	case "list":
+		return secretsListCmd(ctx, args[1:], sys)
+	case "delete":
+		return secretsDeleteCmd(ctx, args[1:], sys)
 	case "-h", "-help", "--help", "help":
 		_, _ = fmt.Fprint(sys.Stdout, secretsUsage)
 		return ExitOK
@@ -38,7 +42,9 @@ Subcommands:
   init-key [--out FILE]   Generate a master key (base64). With --out, write it
                           to a new file with mode 0600; otherwise print it.
 
-Coming with operator auth (#9): set, list, delete.
+  set NAME                Store a secret; the value is read from stdin
+  list                    List secret names (never values)
+  delete NAME             Delete a secret
 `
 
 func initKeyCmd(args []string, sys IO) int {

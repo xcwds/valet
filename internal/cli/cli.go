@@ -28,6 +28,7 @@ type Env func(string) string
 
 // IO bundles what a command needs from its process.
 type IO struct {
+	Stdin          io.Reader
 	Stdout, Stderr io.Writer
 	Getenv         Env
 	// Unsetenv removes a variable from the process environment (os.Unsetenv
@@ -55,10 +56,14 @@ func Run(ctx context.Context, args []string, sys IO) int {
 	case "status":
 		return statusCmd(ctx, rest, sys)
 	case "secrets":
-		return secretsCmd(rest, sys)
+		return secretsCmd(ctx, rest, sys)
 	case "audit":
 		return auditCmd(ctx, rest, sys)
-	case "job", "approve", "reject", "approvals", "session", "policy":
+	case "job":
+		return jobCmd(ctx, rest, sys)
+	case "admin":
+		return adminCmd(ctx, rest, sys)
+	case "approve", "reject", "approvals", "session", "policy":
 		return notYet(cmd, sys)
 	case "help", "-h", "-help", "--help":
 		_, _ = fmt.Fprint(sys.Stdout, usageText)
@@ -78,7 +83,6 @@ func isDaemonName(arg0 string) bool {
 
 // plannedIn says which issue brings each command that isn't built yet.
 var plannedIn = map[string]string{
-	"job":       "#9",
 	"approve":   "#23",
 	"reject":    "#23",
 	"approvals": "#23",
@@ -136,12 +140,14 @@ const usageText = `Usage: valet <command> [flags]
 Commands:
   version   Print the version
   status    Ask a running valetd whether it is healthy
-  secrets   Manage the secret store (init-key now; set/list/delete with #9)
+  job       Create, list, show and revoke jobs
+  secrets   Manage the secret store (init-key, set, list, delete)
   audit     Read and verify the audit log (tail, verify)
+  admin     Recover operator access (reset-token)
   daemon    Run the broker daemon (same as running the binary as valetd)
   help      Show this help
 
-Coming with later issues: job, approve, reject, approvals, session, policy.
+Coming with later issues: approve, reject, approvals, session, policy.
 
 Run 'valet <command> -h' for a command's flags.
 `

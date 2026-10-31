@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/xcwds/valet/internal/audit"
@@ -34,10 +36,13 @@ var ErrNotFound = errors.New("secret not found")
 // logs and audit rows.
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,127}$`)
 
-// ValidateName reports whether name may be used for a secret.
+// ValidateName reports whether name may be used for a secret. Names appear in
+// URL paths, so path-like tricks (.. segments, empty segments, a trailing /)
+// are refused.
 func ValidateName(name string) error {
-	if !validName.MatchString(name) {
-		return fmt.Errorf("secret name %q: use 1-128 of a-z 0-9 . _ / -, starting with a letter or digit", name)
+	if !validName.MatchString(name) || strings.HasSuffix(name, "/") || strings.Contains(name, "//") ||
+		slices.Contains(strings.Split(name, "/"), "..") || slices.Contains(strings.Split(name, "/"), ".") {
+		return fmt.Errorf("secret name %q: use 1-128 of a-z 0-9 . _ / -, starting with a letter or digit, with no empty, . or .. segments", name)
 	}
 	return nil
 }
