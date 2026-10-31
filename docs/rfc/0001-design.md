@@ -271,8 +271,8 @@ user account and the App.
 
 | Role        | Token permissions                                       | Can't do, even if policy is bypassed |
 | ----------- | ------------------------------------------------------- | ------------------------------------ |
-| reviewer    | contents: read, pull_requests: write, metadata: read    | push, merge                          |
-| implementer | contents: write, pull_requests: write, metadata: read   | anything in other repos; admin       |
+| reviewer    | contents: read, pull_requests: write, checks: read, metadata: read  | push, merge                          |
+| implementer | contents: write, pull_requests: write, checks: read, metadata: read | anything in other repos; admin       |
 | triage      | issues: write, metadata: read                           | touch code or PRs                    |
 
 **v1 action catalog:** `repo.read`, `repo.file.get`, `issue.read`, `issue.comment`, `pr.read`,

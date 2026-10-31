@@ -33,5 +33,6 @@ log:
 # built-in roles in policies/roles.yaml (reviewer, implementer, triage). Try
 # a decision with `valet policy check`.
 # policies: /etc/valet/policies     # (VALET_POLICIES)
-# Connector configuration (later milestones).
-# connectors: /etc/valet/connectors # (VALET_CONNECTORS)
+# Connector configuration: one section per upstream. GitHub: see
+# docs/github-app.md. Without it, no connector is started.
+# connectors: /etc/valet/connectors.yaml # (VALET_CONNECTORS)
