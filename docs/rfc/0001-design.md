@@ -58,8 +58,8 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
 14. **Go, one static binary, one image, SQLite by default** (see [Tech stack](#tech-stack)).
 15. **Myth names in docs, plain names in code.** Components carry Greek-myth names in docs, UI and
     log prefixes; code paths stay descriptive (see [Naming](#naming)).
-
-Still open: the license (Apache-2.0 or GPL); see [Open questions](#open-questions).
+16. **Apache-2.0.** Its explicit patent grant suits infrastructure, and it matches the Go ecosystem
+    Valet builds on (cel-go, go-github, the MCP Go SDK).
 
 ## Naming
 
@@ -377,7 +377,7 @@ proven end to end. The plan, with one issue per piece of work, is the epic linke
 
 ## Open questions
 
-Answered (recorded as decisions above, 2026-10-31):
+All answered and recorded as decisions above (2026-10-31):
 
 - **Project name:** Valet, with Greek-myth component names (decision 15).
 - **Agent LLM credential:** accept in-container auth for now; the owner eventually plans to use
@@ -388,11 +388,7 @@ Answered (recorded as decisions above, 2026-10-31):
   broker. An agent should not be able to establish a new identity (decision 10).
 - **Bind session tokens to source IP:** TTL and revocation are enough to start (decision 11).
 - **Build on Agent Vault:** keep it separate, borrow ideas (decision 13).
-
-Still open:
-
-- **License:** leaning Apache-2.0, also considering GPL. Until it's settled the repo has no
-  `LICENSE` file.
+- **License:** Apache-2.0, chosen over GPL on 2026-10-31 (decision 16, #4).
 
 ## Prior art
 

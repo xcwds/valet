@@ -57,4 +57,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Agents start at [AGENTS.md](AGENTS.md).
 
 ## License
 
-Not chosen yet (Apache-2.0 or GPL); see the RFC's open questions.
+[Apache-2.0](LICENSE).

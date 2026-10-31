@@ -22,3 +22,9 @@ go build ./... && go vet ./... && golangci-lint run && go test -race ./...
 - Security-relevant changes need negative tests (the denied case), not only happy paths.
 - If a change alters a design decision, update `docs/rfc/0001-design.md` in the same PR.
 - Never commit secrets, keys or tokens, including test fixtures that look real.
+
+## License
+
+Valet is licensed under [Apache-2.0](LICENSE). By contributing, you agree that your contributions
+are licensed under it too (section 5 of the license). Files don't need per-file license headers;
+the root `LICENSE` covers the repo.
