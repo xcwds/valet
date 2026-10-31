@@ -70,6 +70,10 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   and validates params, and the per-job credential `Cache`. In-tree connectors go in
   `internal/connector/<name>/` and are listed in `internal/connector/builtin`; a test fails if any
   other non-test code imports a specific connector. `internal/connector/fake` is for tests.
+- `internal/connector/github`: the GitHub App connector. `Mint` signs an App JWT (RS256, stdlib),
+  checks every job repo belongs to the installation's account, requests a token narrowed to the
+  job's repos and role permissions, and revokes and refuses one that comes back broader. Backoff per
+  job and on rate limits. The action catalog is #13. Operator setup: `docs/github-app.md`.
 - `internal/pipeline`: the one path every agent request takes: resolve and validate → policy →
   audit the decision → mint (cached) → execute → audit the result. Anything but an allow returns
   `*pipeline.Denied` before minting; `require_approval` fails closed until #23. Until #11 valetd

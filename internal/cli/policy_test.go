@@ -60,3 +60,15 @@ func TestJobCreateRefusesUndefinedRoles(t *testing.T) {
 		t.Fatalf("code %d, err %q", code, errOut)
 	}
 }
+
+func TestValetdRefusesABadConnectorsFile(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "connectors.yaml")
+	if err := os.WriteFile(bad, []byte("github:\n  app_id: '1'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := writeFile(t, loopbackConfig(t)+"connectors: "+bad+"\n")
+	code, stderr := runUntilStarted(t, path, map[string]string{"VALET_MASTER_KEY": testKey})
+	if code != ExitError || !strings.Contains(stderr, "installation_id is required") {
+		t.Fatalf("code %d, stderr %q", code, stderr)
+	}
+}

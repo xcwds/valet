@@ -117,7 +117,12 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	// Hephaestus: the connectors, checked now so a bad catalog stops valetd
 	// at start. The pipeline is what MCP (#14) and git (#17) will call; until
 	// policy (#11) is configured it denies everything.
-	registry, err := connector.NewRegistry(builtin.All()...)
+	conns, err := builtin.Load(cfg.Connectors, builtin.Deps{Secrets: secretStore})
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	registry, err := connector.NewRegistry(conns...)
 	if err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
