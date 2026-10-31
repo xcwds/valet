@@ -36,3 +36,18 @@ log:
 # Connector configuration: one section per upstream. GitHub: see
 # docs/github-app.md. Without it, no connector is started.
 # connectors: /etc/valet/connectors.yaml # (VALET_CONNECTORS)
+
+# Alerts: where denials and rules marked `alert: true` are reported. Delivery
+# is asynchronous and never slows or changes a decision; at most 5 alerts per
+# job per 10 minutes, then one summary. Messages carry the job, role, action,
+# rule, reason and the audit log's redacted params, so they reach whoever runs
+# the topic: prefer a self-hosted ntfy, or one with an access token.
+# alerts:
+#   on_deny: all # all, or alert_rules_only
+#   ui_url: https://valet.lan:14400 # links each alert to its audit entry
+#   ntfy:
+#     url: https://ntfy.example.com/valet # (VALET_ALERTS_NTFY_URL)
+#     token_secret: ntfy/token # a secret store entry, sent as a Bearer token
+#   webhook:
+#     url: https://hooks.example.com/valet # POSTs each alert as JSON
+#     token_secret: webhook/token

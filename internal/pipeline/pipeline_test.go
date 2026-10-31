@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xcwds/valet/internal/alert"
 	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/connector"
 	"github.com/xcwds/valet/internal/connector/fake"
@@ -244,5 +245,49 @@ func TestCredentialReusedAcrossRequests(t *testing.T) {
 	}
 	if mints, executed, _ := f.fake.Snapshot(); len(mints) != 1 || len(executed) != 3 {
 		t.Errorf("mints %d, executed %d", len(mints), len(executed))
+	}
+}
+
+type alertSink struct{ got []alert.Alert }
+
+func (s *alertSink) Send(a alert.Alert) { s.got = append(s.got, a) }
+
+func TestAlertsCarryTheAuditedRecord(t *testing.T) {
+	alerting := policyFunc(func(r Request) (Decision, error) {
+		if r.Action == "fake.echo" && r.Params["message"] != "deny-me" {
+			return Decision{Effect: Allow, Rule: "echo-watched", Alert: true}, nil
+		}
+		return Decision{Effect: Deny, Rule: "no-danger", Reason: "not for this role", Alert: true}, nil
+	})
+	f := newFixture(t, alerting)
+	sink := &alertSink{}
+	f.pl.SetAlerter(sink)
+
+	if _, err := f.run("fake.echo", `{"message":"deny-me","note":"should-not-leave"}`); err == nil {
+		t.Fatal("danger allowed")
+	}
+	if _, err := f.run("fake.echo", `{"message":"hi","note":"keep-out-of-audit"}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.run("fake.nope", `{}`); err == nil {
+		t.Fatal("unknown action allowed")
+	}
+
+	recs := f.trail(t)
+	if len(sink.got) != 3 {
+		t.Fatalf("%d alerts, want 3: %+v", len(sink.got), sink.got)
+	}
+	d, a, u := sink.got[0], sink.got[1], sink.got[2]
+	if d.Decision != audit.Deny || d.Rule != "no-danger" || d.Role != "reviewer" || d.Reason != "not for this role" || !d.RuleAlert || d.AuditSeq != recs[0].Seq {
+		t.Errorf("deny alert = %+v", d)
+	}
+	if string(d.Params) != string(recs[0].Params) || strings.Contains(string(d.Params), "should-not-leave") {
+		t.Errorf("alert params %s differ from the redacted audit params %s", d.Params, recs[0].Params)
+	}
+	if a.Decision != audit.Allow || a.Rule != "echo-watched" || !a.RuleAlert || strings.Contains(string(a.Params), "keep-out-of-audit") {
+		t.Errorf("allow alert = %+v", a)
+	}
+	if u.Decision != audit.Deny || u.RuleAlert || u.Reason != "unknown action" {
+		t.Errorf("default deny alert = %+v", u)
 	}
 }

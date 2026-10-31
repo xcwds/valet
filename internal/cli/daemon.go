@@ -3,11 +3,13 @@ package cli
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/xcwds/valet/internal/adminapi"
+	"github.com/xcwds/valet/internal/alert"
 	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/config"
 	"github.com/xcwds/valet/internal/connector"
@@ -151,6 +153,22 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	jobSvc.RequireRoles(pol.HasRole)
 	pl := pipeline.New(registry, pol, auditLog, creds, log)
 
+	// Alerts: delivered in the background, never on the request path.
+	alerts, err := newAlerts(cfg.Alerts, secretStore, log)
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	alertsDone := make(chan struct{})
+	alertCtx, stopAlerts := context.WithCancel(context.WithoutCancel(ctx))
+	if alerts != nil {
+		pl.SetAlerter(alerts)
+		go func() { alerts.Run(alertCtx); close(alertsDone) }()
+	} else {
+		close(alertsDone)
+	}
+	defer func() { stopAlerts(); <-alertsDone }()
+
 	// Iris: MCP at /mcp on the agent port. The git proxy (#17) joins it.
 	iris, err := mcp.New(registry, pl, pol, log)
 	if err != nil {
@@ -213,4 +231,28 @@ func loadPolicy(path string) (*policy.Policy, error) {
 		return policy.LoadFS("built-in defaults", policies.Defaults)
 	}
 	return policy.LoadPath(path)
+}
+
+// newAlerts builds the alert dispatcher from config, or nil when no
+// destination is configured.
+func newAlerts(cfg config.Alerts, s alert.SecretGetter, log *slog.Logger) (*alert.Dispatcher, error) {
+	var ns []alert.Notifier
+	if cfg.Ntfy != nil {
+		n, err := alert.NewNtfy(cfg.Ntfy.URL, cfg.Ntfy.TokenSecret, s)
+		if err != nil {
+			return nil, err
+		}
+		ns = append(ns, n)
+	}
+	if cfg.Webhook != nil {
+		w, err := alert.NewWebhook(cfg.Webhook.URL, cfg.Webhook.TokenSecret, s)
+		if err != nil {
+			return nil, err
+		}
+		ns = append(ns, w)
+	}
+	if len(ns) == 0 {
+		return nil, nil
+	}
+	return alert.New(alert.Options{OnDeny: cfg.OnDeny, LinkBase: cfg.UIURL}, logging.For(log, "alerts"), ns...), nil
 }

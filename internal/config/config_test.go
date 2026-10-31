@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -46,7 +47,7 @@ connectors: /etc/valet/connectors
 		Policies:   "/etc/valet/policies",
 		Connectors: "/etc/valet/connectors",
 	}
-	if *cfg != want {
+	if !reflect.DeepEqual(*cfg, want) {
 		t.Fatalf("got %+v\nwant %+v", *cfg, want)
 	}
 }
@@ -84,15 +85,35 @@ func TestEnvOverridesFile(t *testing.T) {
 
 func TestEveryEnvNameIsApplied(t *testing.T) {
 	for _, name := range EnvNames() {
-		var before, after Config
+		var after Config
 		for _, o := range envOverrides {
 			if o.name == name {
 				o.set(&after, "x")
 			}
 		}
-		if before == after {
+		if reflect.DeepEqual(after, Config{}) {
 			t.Errorf("%s changes nothing", name)
 		}
+	}
+}
+
+func TestAlertsConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "data_dir: /d\nalerts:\n  on_deny: alert_rules_only\n  ntfy: {url: 'https://ntfy.sh/t', token_secret: ntfy/token}\n"), envFrom(nil))
+	if err != nil || cfg.Alerts.Ntfy.URL != "https://ntfy.sh/t" || cfg.Alerts.OnDeny != "alert_rules_only" {
+		t.Fatalf("%+v %v", cfg.Alerts, err)
+	}
+	for name, body := range map[string]string{
+		"bad on_deny":  "data_dir: /d\nalerts: {on_deny: some}\n",
+		"no url":       "data_dir: /d\nalerts: {ntfy: {token_secret: x}}\n",
+		"inline token": "data_dir: /d\nalerts: {ntfy: {url: 'https://x', token: abc}}\n",
+	} {
+		if _, err := Load(writeConfig(t, body), envFrom(nil)); err == nil {
+			t.Errorf("%s: loaded", name)
+		}
+	}
+	cfg, _ = Load("", envFrom(map[string]string{"VALET_DATA_DIR": "/d", "VALET_ALERTS_NTFY_URL": "https://ntfy.sh/x"}))
+	if cfg.Alerts.Ntfy == nil || cfg.Alerts.Ntfy.URL != "https://ntfy.sh/x" {
+		t.Errorf("env: %+v", cfg.Alerts)
 	}
 }
 
