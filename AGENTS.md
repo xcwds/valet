@@ -41,6 +41,15 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   master key, secret name bound into both as additional data). `master_keys` holds a canary per key,
   so valetd refuses a different key at start. Values come back as `secrets.Secret`, which prints
   and encodes as `[redacted]` in every form; call `Reveal()` only where the value is used.
+- `internal/audit`: Clio. `Log.Append` records an event in its own transaction; `AppendTx` +
+  `Emit` record it inside a caller's `store.Write`, so it commits with the change it describes.
+  Rows are hash-chained (each hash covers the row's canonical JSON, including `seq` and
+  `prev_hash`); `Verify` reports the first edited, deleted or reordered row, and valetd refuses to
+  start on a broken chain. Params are canonical JSON with sensitive keys redacted and strings over
+  1 KiB replaced by length and SHA-256. Each event is also emitted on stdout at `LevelAudit`, which
+  no log level hides. A chain can't reveal that the newest rows were cut off; the stdout copy
+  shipped off the host is the check for that. `valet audit tail|verify --data-dir` read the
+  database directly, read-only and without the lock.
 - `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with

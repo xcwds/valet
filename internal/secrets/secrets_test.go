@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/xcwds/valet/internal/audit"
+	"github.com/xcwds/valet/internal/logging"
 	"github.com/xcwds/valet/internal/store"
 )
 
@@ -36,6 +38,7 @@ type fixture struct {
 	db  *store.Store
 	key *MasterKey
 	s   *Store
+	out *bytes.Buffer // audit stream
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -56,7 +59,8 @@ func (f *fixture) reopen(t *testing.T, key *MasterKey) error {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	f.db = db
-	s, err := Open(context.Background(), db, key)
+	f.out = &bytes.Buffer{}
+	s, err := Open(context.Background(), db, key, audit.New(db, logging.New(f.out, "json", slog.LevelError)))
 	f.s = s
 	return err
 }
@@ -305,5 +309,75 @@ func TestErrorsNeverContainValues(t *testing.T) {
 	_, err := f.s.Get(ctx, "x")
 	if err == nil || strings.Contains(err.Error(), "value-in-error-check") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func auditActions(t *testing.T, f *fixture) []string {
+	t.Helper()
+	recs, err := audit.Tail(ctx, f.db.Read(), audit.Filter{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, r := range recs {
+		out = append(out, r.Action+":"+r.Decision)
+	}
+	return out
+}
+
+func TestSecretChangesAreAuditedByNameOnly(t *testing.T) {
+	f := newFixture(t)
+	const value = "audit-must-not-see-this-value"
+	if err := f.s.Put(ctx, "github/app-key", []byte(value)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Delete(ctx, "github/app-key"); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(auditActions(t, f), ",")
+	want := "master_key.record:allow,secret.put:allow,secret.delete:allow"
+	if got != want {
+		t.Errorf("audit = %s, want %s", got, want)
+	}
+	recs, _ := audit.Tail(ctx, f.db.Read(), audit.Filter{Limit: 100})
+	for _, r := range recs {
+		if strings.Contains(string(r.Params), value) {
+			t.Errorf("value in audit params: %s", r.Params)
+		}
+	}
+	if strings.Contains(f.out.String(), value) {
+		t.Error("value in the audit stream")
+	}
+	if !strings.Contains(string(recs[1].Params), "github/app-key") {
+		t.Errorf("put not audited by name: %s", recs[1].Params)
+	}
+}
+
+func TestFailedPutIsNotAudited(t *testing.T) {
+	f := newFixture(t)
+	before := len(auditActions(t, f))
+	if err := f.s.Put(ctx, "Bad Name", []byte("v")); err == nil {
+		t.Fatal("bad name accepted")
+	}
+	if err := f.s.Delete(ctx, "missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatal(err)
+	}
+	if after := len(auditActions(t, f)); after != before {
+		t.Errorf("audit grew from %d to %d for changes that didn't happen", before, after)
+	}
+}
+
+func TestKeyChecksAreAudited(t *testing.T) {
+	f := newFixture(t)
+	if err := f.reopen(t, f.key); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.reopen(t, newKey(t)); err == nil {
+		t.Fatal("wrong key accepted")
+	}
+	got := strings.Join(auditActions(t, f), ",")
+	want := "master_key.record:allow,master_key.verify:allow,master_key.verify:deny"
+	if got != want {
+		t.Errorf("audit = %s, want %s", got, want)
 	}
 }

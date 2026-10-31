@@ -418,3 +418,33 @@ func TestOneValetdPerDataDir(t *testing.T) {
 	}
 	_ = s2.Close()
 }
+
+func TestOpenReadOnlyWhileOpen(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "data")
+	s := openT(t, dir)
+	if err := s.Write(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO jobs VALUES ('j', 'r', '{}', 'p', 60, 't', 'active', 'op', 't', NULL)`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ro, err := OpenReadOnly(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("read-only open while the store holds the lock: %v", err)
+	}
+	defer ro.Close()
+	var n int
+	if err := ro.QueryRow(`SELECT count(*) FROM jobs`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("count = %d (%v)", n, err)
+	}
+	if _, err := ro.Exec(`DELETE FROM jobs`); err == nil {
+		t.Fatal("write through the read-only handle succeeded")
+	}
+}
+
+func TestOpenReadOnlyMissing(t *testing.T) {
+	if _, err := OpenReadOnly(context.Background(), filepath.Join(t.TempDir(), "nope")); err == nil {
+		t.Fatal("opened a database that doesn't exist")
+	}
+}
