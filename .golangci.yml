@@ -28,9 +28,10 @@ linters:
     presets:
       - std-error-handling
     rules:
-      # Tests may use fixed file modes and ignore errors on cleanup.
+      # Tests may use fixed file modes, ignore errors on cleanup, and dial
+      # local test servers without a context.
       - path: _test\.go
-        linters: [gosec, errcheck]
+        linters: [gosec, errcheck, noctx]
 
 formatters:
   enable:

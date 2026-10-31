@@ -15,8 +15,13 @@ Build and run:
 go build -o bin/valet ./cmd/valet
 ln -sf valet bin/valetd
 bin/valet version
-bin/valetd
+cp valet.example.yaml valet.yaml   # set data_dir; for local runs, log.format: text
+bin/valetd --config valet.yaml
+bin/valet status                   # in another terminal
 ```
+
+`valet.yaml` is git-ignored; `valet.example.yaml` documents every setting and its
+`VALET_*` environment override.
 
 ## Checks
 

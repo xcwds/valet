@@ -3,11 +3,17 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/xcwds/valet/internal/cli"
 )
 
 func main() {
-	os.Exit(cli.Run(os.Args, os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := cli.Run(ctx, os.Args, cli.IO{Stdout: os.Stdout, Stderr: os.Stderr, Getenv: os.Getenv})
+	stop()
+	os.Exit(code)
 }

@@ -28,8 +28,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          # Keyed on go.mod until the module has dependencies and a go.sum.
-          cache-dependency-path: go.mod
+          cache-dependency-path: go.sum
 
       - name: go.mod and go.sum are tidy
         run: go mod tidy -diff
@@ -51,7 +50,13 @@ jobs:
           file bin/valet | tee /dev/stderr | grep -q 'statically linked'
           ln -s valet bin/valetd
           bin/valet version
-          bin/valetd
+          bin/valetd version
+          # It really starts: serve, answer /healthz, stop on SIGTERM with exit 0.
+          VALET_DATA_DIR=/tmp/valet VALET_ADMIN_ADDR=127.0.0.1:14400 bin/valetd &
+          for i in $(seq 50); do bin/valet status && break; sleep 0.1; done
+          bin/valet status
+          kill -TERM %1
+          wait %1
 
   lint:
     name: Lint
@@ -67,8 +72,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          # Keyed on go.mod until the module has dependencies and a go.sum.
-          cache-dependency-path: go.mod
+          cache-dependency-path: go.sum
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
@@ -89,8 +93,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          # Keyed on go.mod until the module has dependencies and a go.sum.
-          cache-dependency-path: go.mod
+          cache-dependency-path: go.sum
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...

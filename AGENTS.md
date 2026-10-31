@@ -24,6 +24,13 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
 
 - `cmd/valet`: the one binary. `internal/cli` dispatches it: `valet …` is the CLI; run as `valetd`
   (a symlink or copy with that name) or `valet daemon`, it is the daemon (RFC decision 14).
+- `internal/config`: strict YAML config plus `VALET_*` overrides; `valet.example.yaml` documents it
+  and a test keeps it loadable. Add a setting in all three places: the struct, `envOverrides` and
+  the example.
+- `internal/daemon`: valetd's three listeners (admin, agent, egress), each its own `http.Server`.
+  Agent and egress refuse every request (403) until their components land.
+- `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
+  shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with
   `-ldflags "-X github.com/xcwds/valet/internal/version.Version=…"`.
 - `internal/` (planned): one package per component, named for what it does (`config`, `store`,

@@ -6,6 +6,9 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -20,29 +23,42 @@ const (
 	ExitUsage = 2
 )
 
+// Env is the process environment the CLI reads (os.Getenv in production).
+type Env func(string) string
+
+// IO bundles what a command needs from its process.
+type IO struct {
+	Stdout, Stderr io.Writer
+	Getenv         Env
+}
+
 // Run executes the command line args (args[0] is the program name) and
-// returns the process exit code.
-func Run(args []string, stdout, stderr io.Writer) int {
+// returns the process exit code. ctx is canceled on SIGINT or SIGTERM.
+func Run(ctx context.Context, args []string, sys IO) int {
 	if len(args) == 0 {
-		return usage(stderr)
+		return usage(sys.Stderr)
 	}
 	if isDaemonName(args[0]) {
-		return daemon(args[1:], stdout, stderr)
+		return daemonCmd(ctx, "valetd", args[1:], sys)
 	}
 	if len(args) < 2 {
-		return usage(stderr)
+		return usage(sys.Stderr)
 	}
 	switch cmd, rest := args[1], args[2:]; cmd {
 	case "version", "-version", "--version":
-		return printVersion("valet", rest, stdout, stderr)
+		return printVersion("valet", rest, sys)
 	case "daemon":
-		return daemon(rest, stdout, stderr)
+		return daemonCmd(ctx, "valet daemon", rest, sys)
+	case "status":
+		return statusCmd(ctx, rest, sys)
+	case "job", "audit", "approve", "reject", "approvals", "session", "secrets", "policy":
+		return notYet(cmd, sys)
 	case "help", "-h", "-help", "--help":
-		_, _ = fmt.Fprint(stdout, usageText)
+		_, _ = fmt.Fprint(sys.Stdout, usageText)
 		return ExitOK
 	default:
-		_, _ = fmt.Fprintf(stderr, "valet: unknown command %q\n\n", cmd)
-		return usage(stderr)
+		_, _ = fmt.Fprintf(sys.Stderr, "valet: unknown command %q\n\n", cmd)
+		return usage(sys.Stderr)
 	}
 }
 
@@ -53,30 +69,56 @@ func isDaemonName(arg0 string) bool {
 	return strings.TrimSuffix(name, ".exe") == "valetd"
 }
 
-// daemon is the valetd entry point. Until the daemon exists (#5) it only
-// reports its version, and refuses anything else rather than pretending to run.
-func daemon(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return printVersion("valetd", nil, stdout, stderr)
-	}
-	switch args[0] {
-	case "version", "-version", "--version":
-		return printVersion("valetd", args[1:], stdout, stderr)
-	default:
-		_, _ = fmt.Fprintf(stderr, "valetd: %q is not supported yet; the daemon arrives with #5\n", args[0])
-		return ExitUsage
-	}
+// plannedIn says which issue brings each command that isn't built yet.
+var plannedIn = map[string]string{
+	"job":       "#9",
+	"audit":     "#8",
+	"approve":   "#23",
+	"reject":    "#23",
+	"approvals": "#23",
+	"session":   "#19",
+	"secrets":   "#7",
+	"policy":    "#11",
 }
 
-func printVersion(name string, extra []string, stdout, stderr io.Writer) int {
+func notYet(cmd string, sys IO) int {
+	_, _ = fmt.Fprintf(sys.Stderr, "valet %s: not implemented yet (%s)\n", cmd, plannedIn[cmd])
+	return ExitError
+}
+
+func printVersion(name string, extra []string, sys IO) int {
 	if len(extra) > 0 {
-		_, _ = fmt.Fprintf(stderr, "%s version: unexpected arguments %q\n", name, extra)
+		_, _ = fmt.Fprintf(sys.Stderr, "%s version: unexpected arguments %q\n", name, extra)
 		return ExitUsage
 	}
-	if _, err := fmt.Fprintf(stdout, "%s %s\n", name, version.String()); err != nil {
+	if _, err := fmt.Fprintf(sys.Stdout, "%s %s\n", name, version.String()); err != nil {
 		return ExitError
 	}
 	return ExitOK
+}
+
+// newFlagSet returns a flag set that reports errors to stderr instead of
+// exiting, so commands stay testable.
+func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	return fs
+}
+
+// parseFlags parses args and maps the result to an exit code; ok is false
+// when the caller should return code immediately.
+func parseFlags(fs *flag.FlagSet, args []string) (code int, ok bool) {
+	err := fs.Parse(args)
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		return ExitOK, false
+	case err != nil:
+		return ExitUsage, false
+	case fs.NArg() > 0:
+		_, _ = fmt.Fprintf(fs.Output(), "%s: unexpected arguments %q\n", fs.Name(), fs.Args())
+		return ExitUsage, false
+	}
+	return ExitOK, true
 }
 
 func usage(w io.Writer) int {
@@ -84,10 +126,16 @@ func usage(w io.Writer) int {
 	return ExitUsage
 }
 
-const usageText = `Usage: valet <command>
+const usageText = `Usage: valet <command> [flags]
 
 Commands:
   version   Print the version
+  status    Ask a running valetd whether it is healthy
   daemon    Run the broker daemon (same as running the binary as valetd)
   help      Show this help
+
+Coming with later issues: job, audit, approve, reject, approvals, session,
+secrets, policy.
+
+Run 'valet <command> -h' for a command's flags.
 `

@@ -1,0 +1,30 @@
+# Example valetd configuration. Copy it to valet.yaml and adjust.
+#
+# Parsing is strict: an unknown or misspelled key stops valetd from starting.
+# Every setting can be overridden by an environment variable (shown on each
+# line); run `valetd -h` for the list. Secrets never go in this file.
+
+# Database and other state. Required. (VALET_DATA_DIR)
+data_dir: /var/lib/valet
+
+listen:
+  # Operator API and UI. Keep it off the agents' network. (VALET_ADMIN_ADDR)
+  admin: 127.0.0.1:14400
+  # MCP endpoint (/mcp) and git proxy (/git/...). (VALET_AGENT_ADDR)
+  agent: :14401
+  # Registry egress proxy. (VALET_EGRESS_ADDR)
+  egress: :14402
+
+# Where the secret store's master key comes from: a file (such as a Docker
+# secret) or the name of an environment variable; never the key itself.
+master_key:
+  file: /run/secrets/master_key # (VALET_MASTER_KEY_FILE)
+  # env: VALET_MASTER_KEY        # (VALET_MASTER_KEY_ENV)
+
+log:
+  level: info # debug, info, warn or error (VALET_LOG_LEVEL)
+  format: json # json, or text with [component] prefixes (VALET_LOG_FORMAT)
+
+# Role and policy files, and connector configuration (later milestones).
+# policies: /etc/valet/policies     # (VALET_POLICIES)
+# connectors: /etc/valet/connectors # (VALET_CONNECTORS)
