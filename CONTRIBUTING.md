@@ -5,16 +5,29 @@ decisions are binding until a PR changes them.
 
 ## Setup
 
-You need Go (the version is pinned by the repo setup issue in `go.mod` and `mise.toml`),
-`golangci-lint`, `git` and Docker (for the devcontainer and end-to-end tests).
+You need Go and golangci-lint at the versions in `mise.toml` (`mise install` sets both up; `go`
+also fetches the `toolchain` from `go.mod` by itself), `git`, and Docker for the devcontainer and
+end-to-end tests. Or open the repo in its devcontainer, which has all of it.
+
+Build and run:
+
+```sh
+go build -o bin/valet ./cmd/valet
+ln -sf valet bin/valetd
+bin/valet version
+bin/valetd
+```
 
 ## Checks
 
 Run before every push:
 
 ```sh
-go build ./... && go vet ./... && golangci-lint run && go test -race ./...
+go mod tidy -diff && go build ./... && go vet ./... && golangci-lint run && go test -race ./...
 ```
+
+CI also runs `govulncheck ./...` and checks that a `CGO_ENABLED=0` build is statically linked
+(`modernc.org/sqlite` keeps Valet free of cgo). `golangci-lint fmt` fixes formatting.
 
 ## Pull requests
 
