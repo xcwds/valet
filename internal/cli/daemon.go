@@ -159,6 +159,7 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
 	}
+	checkAlertSecrets(ctx, cfg.Alerts, secretStore, log)
 	alertsDone := make(chan struct{})
 	alertCtx, stopAlerts := context.WithCancel(context.WithoutCancel(ctx))
 	if alerts != nil {
@@ -255,4 +256,18 @@ func newAlerts(cfg config.Alerts, s alert.SecretGetter, log *slog.Logger) (*aler
 		return nil, nil
 	}
 	return alert.New(alert.Options{OnDeny: cfg.OnDeny, LinkBase: cfg.UIURL}, logging.For(log, "alerts"), ns...), nil
+}
+
+// checkAlertSecrets warns at start when a notifier's token secret can't be
+// read, so the operator learns before the first denial that alerts will
+// fail. Not fatal: the secret is often stored after valetd is up.
+func checkAlertSecrets(ctx context.Context, cfg config.Alerts, s alert.SecretGetter, log *slog.Logger) {
+	for name, n := range map[string]*config.Notifier{"alerts.ntfy": cfg.Ntfy, "alerts.webhook": cfg.Webhook} {
+		if n == nil || n.TokenSecret == "" {
+			continue
+		}
+		if _, err := s.Get(ctx, n.TokenSecret); err != nil {
+			log.Error("alert token secret unreadable; alerts will fail until it is stored", "notifier", name, "secret", n.TokenSecret, "err", err)
+		}
+	}
 }
