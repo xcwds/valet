@@ -53,7 +53,8 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
     establish a new identity. The launcher creates the job and hands the container a one-time
     enrollment code; a repeat of the same code within a short window returns the same response, so
     a retried request isn't a false alarm (see [Enrollment](#enrollment)).
-11. **Session tokens rely on TTL and revocation.** No source-IP binding to start.
+11. **Session tokens rely on TTL and revocation.** No source-IP binding to start. Tokens carry a
+    `vlt_` prefix (`vlt_sess_…`, `vlt_enroll_…`) so secret scanners can match them.
 12. **The agent's LLM credential stays in the container** for the PoC. Brokering it is a later goal:
     the owner plans to run all agentic development through Valet.
 13. **Separate from Agent Vault.** Borrow its ideas; don't fork it or build on it.
@@ -62,6 +63,11 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
     log prefixes; code paths stay descriptive (see [Naming](#naming)).
 16. **Apache-2.0.** Permissive, with an explicit patent grant, as is usual for Go infrastructure
     (Kubernetes, cel-go). Valet's permissively licensed dependencies are compatible with it.
+17. **The agent may read its own session token.** It only grants access to Valet, under the job's
+    policy. Hiding it inside the container would suggest that credentials can be kept safe in an
+    agent's container, which this design deliberately doesn't rely on; keeping them out is the
+    point. A token the agent leaks is the threat model's residual risk, bounded by TTL and
+    revocation (decision 11).
 
 ## Naming
 
@@ -110,7 +116,7 @@ the same vocabulary regardless of which tool or interface the request came throu
 | Action        | A namespaced, typed operation with a parameter schema and a risk level                         | `github.pr.review.submit {repo, number, event}`                     |
 | Role          | A reusable template of policy rules                                                           | `reviewer`, `implementer`, `triage`                                 |
 | Job           | One unit of agent work: a role bound to concrete resources, with a TTL                         | implementer on `cmw/site`, branch `agent/job-42/*`, 2 h             |
-| Session token | Opaque bearer token the agent holds, bound to one job; revocable                               | `abk_sess_…`; useless outside the job's scope                       |
+| Session token | Opaque bearer token the agent holds, bound to one job; revocable                               | `vlt_sess_…`; useless outside the job's scope                       |
 | Decision      | allow, deny, or require_approval, plus the rule that produced it                               | `deny: reviewer may not APPROVE`                                    |
 | Audit event   | Append-only record of every request: job, action, params, decision, upstream result            | written for denied attempts too                                     |
 
@@ -350,8 +356,7 @@ ports.
 
 The window adds no new identity: it only hands back the token the same code already produced. Its
 one cost is that a process which copied the code before login finished can fetch that token within
-the window. That matters only if the token is meant to be hidden from the agent, which the PoC
-doesn't attempt (#19).
+the window. That is harmless because the agent may read its own token anyway (decision 17).
 
 ## Tech stack
 
@@ -416,6 +421,10 @@ All answered and recorded as decisions above (2026-10-31):
   broker. An agent should not be able to establish a new identity (decision 10). The mechanism is
   a one-time enrollment code with a short repeat window for retries (owner, 2026-10-31, #19).
 - **Bind session tokens to source IP:** TTL and revocation are enough to start (decision 11).
+- **Token prefix:** `vlt_` (owner, 2026-10-31, #19; decision 11).
+- **Hide the session token from the agent:** no. It only gives access to Valet, and hiding it would
+  give a false sense of safety about keeping credentials inside an agent container (owner,
+  2026-10-31, #19; decision 17).
 - **Build on Agent Vault:** keep it separate, borrow ideas (decision 13).
 - **License:** Apache-2.0, chosen over GPL on 2026-10-31 (decision 16, #4).
 
