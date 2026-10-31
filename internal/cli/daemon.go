@@ -8,6 +8,7 @@ import (
 	"github.com/xcwds/valet/internal/config"
 	"github.com/xcwds/valet/internal/daemon"
 	"github.com/xcwds/valet/internal/logging"
+	"github.com/xcwds/valet/internal/store"
 )
 
 // daemonCmd runs valetd: valetd [--config FILE], or valetd version.
@@ -38,7 +39,18 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	level, _ := config.ParseLevel(cfg.Log.Level) // validated by Load
 	log := logging.New(sys.Stdout, cfg.Log.Format, level)
 
-	if err := daemon.Run(ctx, cfg, log, nil); err != nil {
+	st, err := store.Open(ctx, cfg.DataDir)
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	defer func() {
+		if err := st.Close(); err != nil {
+			log.Error("closing the database", "err", err)
+		}
+	}()
+
+	if err := daemon.Run(ctx, cfg, log, daemon.Options{Health: st.Ping}); err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
 	}

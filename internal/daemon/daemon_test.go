@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -48,11 +49,16 @@ func (b *syncBuffer) String() string {
 // cancels it and returns Run's error.
 func start(t *testing.T, cfg *config.Config, logs io.Writer) (Addrs, func() error) {
 	t.Helper()
+	return startWith(t, cfg, logs, nil)
+}
+
+func startWith(t *testing.T, cfg *config.Config, logs io.Writer, health func(context.Context) error) (Addrs, func() error) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	readyc := make(chan Addrs, 1)
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Run(ctx, cfg, logging.New(logs, "json", slog.LevelDebug), func(a Addrs) { readyc <- a })
+		errc <- Run(ctx, cfg, logging.New(logs, "json", slog.LevelDebug), Options{Ready: func(a Addrs) { readyc <- a }, Health: health})
 	}()
 	select {
 	case a := <-readyc:
@@ -171,9 +177,9 @@ func TestPortInUse(t *testing.T) {
 
 	cfg := testConfig()
 	cfg.Listen.Egress = busy.Addr().String()
-	err = Run(context.Background(), cfg, logging.New(io.Discard, "json", slog.LevelInfo), func(Addrs) {
+	err = Run(context.Background(), cfg, logging.New(io.Discard, "json", slog.LevelInfo), Options{Ready: func(Addrs) {
 		t.Error("ready called although a listener failed")
-	})
+	}})
 	if err == nil || !strings.Contains(err.Error(), "listen egress") {
 		t.Fatalf("err = %v, want a listen egress error", err)
 	}
@@ -243,5 +249,22 @@ func TestInFlightRequestFinishesDuringShutdown(t *testing.T) {
 	}
 	if err := <-stopErr; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHealthzReportsDependencyFailure(t *testing.T) {
+	var logs syncBuffer
+	addrs, _ := startWith(t, testConfig(), &logs, func(context.Context) error {
+		return errors.New("database is locked: /secret/path/valet.db")
+	})
+	status, body := get(t, "http://"+addrs.Admin+"/healthz")
+	if status != http.StatusServiceUnavailable || !strings.Contains(body, `"unhealthy"`) {
+		t.Fatalf("status %d, body %q; want 503 unhealthy", status, body)
+	}
+	if strings.Contains(body, "secret") {
+		t.Errorf("health error detail leaked to the client: %q", body)
+	}
+	if !strings.Contains(logs.String(), "health check failed") {
+		t.Errorf("failure not logged: %s", logs.String())
 	}
 }
