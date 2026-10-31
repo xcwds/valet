@@ -20,3 +20,6 @@ coverage.*
 .idea/
 .vscode/
 .DS_Store
+
+# Local config
+/valet.yaml
