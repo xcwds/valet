@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/store"
 )
 
@@ -51,23 +52,32 @@ const (
 
 // Store reads and writes secrets.
 type Store struct {
-	db  *store.Store
-	key *MasterKey
-	gcm cipher.AEAD // master key
-	now func() time.Time
+	db    *store.Store
+	key   *MasterKey
+	gcm   cipher.AEAD // master key
+	audit *audit.Log
+	now   func() time.Time
 }
 
 // Open checks master against the database and returns the secret store. The
 // first key used with a database is recorded with a canary; afterwards a
 // different key, or one that fails to decrypt its canary, is refused before
-// any secret is touched.
-func Open(ctx context.Context, db *store.Store, master *MasterKey) (*Store, error) {
+// any secret is touched. The outcome is audited either way; puts and deletes
+// are audited in the same transaction as the change, by name only.
+func Open(ctx context.Context, db *store.Store, master *MasterKey, log *audit.Log) (*Store, error) {
 	gcm, err := newGCM(master.key.Reveal())
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{db: db, key: master, gcm: gcm, now: time.Now}
+	s := &Store{db: db, key: master, gcm: gcm, audit: log, now: time.Now}
 	if err := s.checkCanary(ctx); err != nil {
+		// Record the refusal in its own transaction; the check's rolled back.
+		if _, aerr := log.Append(ctx, audit.Event{
+			Interface: audit.InterfaceSystem, Action: "master_key.verify", Decision: audit.Deny,
+			Params: map[string]any{"key_id": master.ID()}, Error: err.Error(),
+		}); aerr != nil {
+			return nil, errors.Join(err, aerr)
+		}
 		return nil, err
 	}
 	return s, nil
@@ -103,9 +113,19 @@ func open(gcm cipher.AEAD, sealed []byte, ad string) ([]byte, error) {
 }
 
 func (s *Store) checkCanary(ctx context.Context) error {
-	return s.db.Write(ctx, func(tx *sql.Tx) error {
+	var rec audit.Record
+	err := s.db.Write(ctx, func(tx *sql.Tx) (err error) {
+		action := "master_key.verify"
+		defer func() {
+			if err == nil {
+				rec, err = s.audit.AppendTx(ctx, tx, audit.Event{
+					Interface: audit.InterfaceSystem, Action: action, Decision: audit.Allow,
+					Params: map[string]any{"key_id": s.key.ID()},
+				})
+			}
+		}()
 		var canary []byte
-		err := tx.QueryRowContext(ctx, `SELECT canary FROM master_keys WHERE key_id = ?`, s.key.ID()).Scan(&canary)
+		err = tx.QueryRowContext(ctx, `SELECT canary FROM master_keys WHERE key_id = ?`, s.key.ID()).Scan(&canary)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			var others int
@@ -116,6 +136,7 @@ func (s *Store) checkCanary(ctx context.Context) error {
 				return errors.New("secrets: the master key does not match this database (wrong key, or the key was replaced)")
 			}
 			// First start with this database: record the key.
+			action = "master_key.record"
 			c, err := seal(s.gcm, []byte(adCanary), adCanary)
 			if err != nil {
 				return fmt.Errorf("secrets: %w", err)
@@ -134,6 +155,11 @@ func (s *Store) checkCanary(ctx context.Context) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	s.audit.Emit(ctx, rec)
+	return nil
 }
 
 func (s *Store) timestamp() string { return s.now().UTC().Format(time.RFC3339Nano) }
@@ -172,7 +198,8 @@ func (s *Store) Put(ctx context.Context, name string, value []byte) error {
 	nonce, body := ciphertext[:dek.NonceSize()], ciphertext[dek.NonceSize():]
 
 	now := s.timestamp()
-	return s.db.Write(ctx, func(tx *sql.Tx) error {
+	var rec audit.Record
+	err = s.db.Write(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO secrets (name, key_id, wrapped_key, nonce, ciphertext, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -184,8 +211,17 @@ func (s *Store) Put(ctx context.Context, name string, value []byte) error {
 		if err != nil {
 			return fmt.Errorf("secrets: put %s: %w", name, err)
 		}
-		return nil
+		rec, err = s.audit.AppendTx(ctx, tx, audit.Event{
+			Interface: audit.InterfaceAdmin, Action: "secret.put", Decision: audit.Allow,
+			Params: map[string]any{"name": name, "length": len(value)},
+		})
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.audit.Emit(ctx, rec)
+	return nil
 }
 
 // Get returns the secret stored under name.
@@ -229,7 +265,8 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 	if err := ValidateName(name); err != nil {
 		return err
 	}
-	return s.db.Write(ctx, func(tx *sql.Tx) error {
+	var rec audit.Record
+	err := s.db.Write(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, name)
 		if err != nil {
 			return fmt.Errorf("secrets: delete %s: %w", name, err)
@@ -237,8 +274,17 @@ func (s *Store) Delete(ctx context.Context, name string) error {
 		if n, _ := res.RowsAffected(); n == 0 {
 			return fmt.Errorf("secrets: %s: %w", name, ErrNotFound)
 		}
-		return nil
+		rec, err = s.audit.AppendTx(ctx, tx, audit.Event{
+			Interface: audit.InterfaceAdmin, Action: "secret.delete", Decision: audit.Allow,
+			Params: map[string]any{"name": name},
+		})
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	s.audit.Emit(ctx, rec)
+	return nil
 }
 
 // Info describes a stored secret without its value.

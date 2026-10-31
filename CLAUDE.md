@@ -21,6 +21,10 @@ Go, one module (`github.com/xcwds/valet`), one static binary built from `cmd/val
   knows about GitHub (RFC decision 7). Route through the connector interface.
 - Deny by default (RFC decision 5): a missing rule, an unknown action, a parse error or a timeout
   denies, and the denial is audited (decision 6). Never fail open.
+- Every decision goes through `audit.Log` (Clio). An audit error means deny: never act on something
+  that wasn't recorded. When a change and its record belong together, use `AppendTx` inside the
+  same `store.Write` and `Emit` after it commits; never call `Append` inside a `Write` callback (the
+  single writer connection deadlocks).
 - Upstream credentials never leave Valet (decision 1): not in responses, errors, logs or audit
   params. Carry them as `secrets.Secret` (prints as `[redacted]`) and call `Reveal()` only at the
   point of use.

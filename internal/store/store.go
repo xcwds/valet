@@ -90,6 +90,30 @@ func open(ctx context.Context, dataDir string, migrations fs.FS) (*Store, error)
 	return s, nil
 }
 
+// OpenReadOnly opens an existing database in dataDir for reading only,
+// without taking the data directory lock or running migrations, so the
+// operator's CLI can read it (audit tail, verify) while valetd runs. Access
+// is governed by the data directory's permissions: only valetd's user (or
+// root) can open it.
+func OpenReadOnly(ctx context.Context, dataDir string) (*sql.DB, error) {
+	path := filepath.Join(dataDir, FileName)
+	if _, err := os.Stat(path); err != nil {
+		return nil, fmt.Errorf("store: %w", err)
+	}
+	if err := checkPrivate(dataDir, "data directory", "chmod 700"); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", dsn(path, true))
+	if err != nil {
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: open %s: %w", path, err)
+	}
+	return db, nil
+}
+
 // dsn builds the modernc.org/sqlite connection string. Every connection gets
 // the same pragmas; readers are additionally query-only.
 func dsn(path string, readOnly bool) string {

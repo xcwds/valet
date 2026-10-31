@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/config"
 	"github.com/xcwds/valet/internal/daemon"
 	"github.com/xcwds/valet/internal/logging"
 	"github.com/xcwds/valet/internal/secrets"
 	"github.com/xcwds/valet/internal/store"
+	"github.com/xcwds/valet/internal/version"
 )
 
 // daemonCmd runs valetd: valetd [--config FILE], or valetd version.
@@ -68,16 +70,49 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		}
 	}()
 
+	// Clio: refuse to append to a chain that's already broken. Someone with
+	// write access to the database has edited history; that needs a person,
+	// not a daemon carrying on.
+	res, err := audit.Verify(ctx, st.Read())
+	if err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+	if !res.OK() {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: the audit log is broken at seq %d: %s\n"+
+			"Investigate before starting (valet audit verify --data-dir %s); valetd will not append to it.\n",
+			res.BrokenSeq, res.Reason, cfg.DataDir)
+		return ExitError
+	}
+	auditLog := audit.New(st, log)
+	logging.For(log, logging.Clio).Info("audit log verified", "events", res.Count)
+
 	// Hekate: proves the key matches this database before anything runs.
 	// Connectors (#10) get the store from here.
-	if _, err := secrets.Open(ctx, st, masterKey); err != nil {
+	if _, err := secrets.Open(ctx, st, masterKey, auditLog); err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
 	}
 	logging.For(log, logging.Hekate).Info("master key verified", "key_id", masterKey.ID())
 
-	if err := daemon.Run(ctx, cfg, log, daemon.Options{Health: st.Ping}); err != nil {
+	if _, err := auditLog.Append(ctx, audit.Event{
+		Interface: audit.InterfaceSystem, Action: "valetd.start", Decision: audit.Info,
+		Params: map[string]any{"version": version.String()},
+	}); err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
+		return ExitError
+	}
+
+	runErr := daemon.Run(ctx, cfg, log, daemon.Options{Health: st.Ping})
+	stopEvent := audit.Event{Interface: audit.InterfaceSystem, Action: "valetd.stop", Decision: audit.Info}
+	if runErr != nil {
+		stopEvent.Error = runErr.Error()
+	}
+	if _, err := auditLog.Append(context.WithoutCancel(ctx), stopEvent); err != nil {
+		log.Error("recording the stop", "err", err)
+	}
+	if runErr != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", runErr)
 		return ExitError
 	}
 	return ExitOK

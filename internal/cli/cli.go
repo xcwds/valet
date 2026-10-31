@@ -56,7 +56,9 @@ func Run(ctx context.Context, args []string, sys IO) int {
 		return statusCmd(ctx, rest, sys)
 	case "secrets":
 		return secretsCmd(rest, sys)
-	case "job", "audit", "approve", "reject", "approvals", "session", "policy":
+	case "audit":
+		return auditCmd(ctx, rest, sys)
+	case "job", "approve", "reject", "approvals", "session", "policy":
 		return notYet(cmd, sys)
 	case "help", "-h", "-help", "--help":
 		_, _ = fmt.Fprint(sys.Stdout, usageText)
@@ -77,7 +79,6 @@ func isDaemonName(arg0 string) bool {
 // plannedIn says which issue brings each command that isn't built yet.
 var plannedIn = map[string]string{
 	"job":       "#9",
-	"audit":     "#8",
 	"approve":   "#23",
 	"reject":    "#23",
 	"approvals": "#23",
@@ -136,11 +137,11 @@ Commands:
   version   Print the version
   status    Ask a running valetd whether it is healthy
   secrets   Manage the secret store (init-key now; set/list/delete with #9)
+  audit     Read and verify the audit log (tail, verify)
   daemon    Run the broker daemon (same as running the binary as valetd)
   help      Show this help
 
-Coming with later issues: job, audit, approve, reject, approvals, session,
-policy.
+Coming with later issues: job, approve, reject, approvals, session, policy.
 
 Run 'valet <command> -h' for a command's flags.
 `

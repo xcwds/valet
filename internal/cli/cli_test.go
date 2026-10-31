@@ -44,7 +44,6 @@ func TestRun(t *testing.T) {
 		{"job not yet", []string{"valet", "job", "create"}, ExitError, "", "not implemented yet (#9)"},
 		{"session not yet", []string{"valet", "session", "login"}, ExitError, "", "not implemented yet (#19)"},
 		{"approve not yet", []string{"valet", "approve", "x"}, ExitError, "", "not implemented yet (#23)"},
-		{"audit not yet", []string{"valet", "audit", "tail"}, ExitError, "", "not implemented yet (#8)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

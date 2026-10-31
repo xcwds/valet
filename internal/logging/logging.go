@@ -27,9 +27,29 @@ const (
 	Hephaestus = "hephaestus"
 )
 
+// LevelAudit is the level audit events are emitted at. It sits above every
+// standard level, so no log-level setting can hide the audit stream, and it
+// prints as "AUDIT".
+const LevelAudit = slog.Level(16)
+
+// auditMax caps the configured level so LevelAudit always passes.
+type auditMax struct{ l slog.Leveler }
+
+func (a auditMax) Level() slog.Level { return min(a.l.Level(), LevelAudit) }
+
+func levelName(_ []string, a slog.Attr) slog.Attr {
+	if a.Key == slog.LevelKey {
+		if l, ok := a.Value.Any().(slog.Level); ok && l == LevelAudit {
+			a.Value = slog.StringValue("AUDIT")
+		}
+	}
+	return a
+}
+
 // New returns a logger writing to w in format "json" or "text" at level.
+// Audit events (LevelAudit) are always written, whatever the level.
 func New(w io.Writer, format string, level slog.Leveler) *slog.Logger {
-	opts := &slog.HandlerOptions{Level: level}
+	opts := &slog.HandlerOptions{Level: auditMax{level}, ReplaceAttr: levelName}
 	if format == "text" {
 		return slog.New(&prefixHandler{inner: slog.NewTextHandler(w, opts)})
 	}

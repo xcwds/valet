@@ -2,6 +2,7 @@ package logging
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"strings"
@@ -64,5 +65,19 @@ func TestLevel(t *testing.T) {
 	l.Warn("loud")
 	if buf.Len() == 0 {
 		t.Error("warn not logged")
+	}
+}
+
+func TestAuditLevelAlwaysWritten(t *testing.T) {
+	var buf bytes.Buffer
+	l := New(&buf, "json", slog.LevelError)
+	l.Log(context.Background(), LevelAudit, "audit", "seq", 1)
+	if !strings.Contains(buf.String(), `"level":"AUDIT"`) {
+		t.Fatalf("audit line missing or mislabelled at error level: %q", buf.String())
+	}
+	buf.Reset()
+	l.Warn("hidden")
+	if buf.Len() != 0 {
+		t.Errorf("warn written at error level: %q", buf.String())
 	}
 }
