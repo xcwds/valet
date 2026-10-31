@@ -50,7 +50,9 @@ The design below in one list, so issues and PRs can cite "RFC decision N".
 9. **One GitHub App**, with installation tokens narrowed per job. User auth is supported too, so
    GitHub activity can be attributed to a user account and the App.
 10. **Containers register at start-up** to establish their identity with the broker. An agent can't
-    establish a new identity.
+    establish a new identity. The launcher creates the job and hands the container a one-time
+    enrollment code; a repeat of the same code within a short window returns the same response, so
+    a retried request isn't a false alarm (see [Enrollment](#enrollment)).
 11. **Session tokens rely on TTL and revocation.** No source-IP binding to start.
 12. **The agent's LLM credential stays in the container** for the PoC. Brokering it is a later goal:
     the owner plans to run all agentic development through Valet.
@@ -313,9 +315,8 @@ secrets:
 ```
 
 The `insteadOf` rewrite sends every GitHub clone and push to Ariadne transparently. The session
-token is fetched at start (or passed in by whatever launches the job) rather than baked into the
-image. Containers register on start-up to establish their identity (decision 10); an agent can't
-mint itself a new identity.
+token is fetched at start rather than baked into the image. Containers register on start-up to
+establish their identity (decision 10); an agent can't mint itself a new identity.
 
 **Package registries.** With an internal network, `npm install` and `pip install` fail. Charon,
 the egress proxy, runs in host-allowlist mode (plain CONNECT, no TLS interception) for registries
@@ -324,6 +325,33 @@ such as npmjs.org, pypi.org and proxy.golang.org. Every CONNECT is logged.
 **Homelab.** The same image runs in its own LXC or VM on Proxmox, Postgres optional. Caddy fronts
 only the admin port with TLS. The agent VLAN's firewall allows outbound traffic only to Valet's
 ports.
+
+### Enrollment
+
+1. Whoever launches the container (the operator's CLI now, an orchestrator later) creates the job
+   on the admin port and gets a **one-time enrollment code** for it, valid for a few minutes.
+2. The launcher passes the code in as a file (a Docker secret or a bind mount), not an env var,
+   which every process could read for the container's lifetime.
+3. `valet session login` exchanges the code for the job's session token on the agent port. It
+   retries network errors with the same code, and deletes the code file only after a response
+   arrives.
+4. **First use** creates the job's one session, and is audited. It is atomic: if two requests with
+   the same code race, exactly one creates the session and the other is answered as a replay.
+5. **Repeat window.** For a short time after first use (default 60 s, capped at 5 min), the same
+   code gets exactly the same response: the same token and expiry, with no new session, no alert
+   and no deny counted. Each replay is audited as a replay. The issued token is held in memory only
+   for the window, so the database still stores only its hash. A restart ends the window early: a
+   retry after it is denied and alerted, a known, rare false positive that fails safe. Replays stop
+   if the job is revoked, and are capped per code.
+6. **Any other reuse** (after the window or the cap, an expired code, a revoked job) is denied,
+   audited and alerted. A job gets a second session only when the operator re-enrolls it, which
+   revokes the first.
+7. The agent port has no route that creates jobs or roles; only the admin port does.
+
+The window adds no new identity: it only hands back the token the same code already produced. Its
+one cost is that a process which copied the code before login finished can fetch that token within
+the window. That matters only if the token is meant to be hidden from the agent, which the PoC
+doesn't attempt (#19).
 
 ## Tech stack
 
@@ -385,7 +413,8 @@ All answered and recorded as decisions above (2026-10-31):
 - **One GitHub App or one per role:** one GitHub App. User auth should be supported so GitHub
   activity is attributed to a user account and the App (decision 9).
 - **Who creates jobs:** ideally, containers register on start-up to establish identity with the
-  broker. An agent should not be able to establish a new identity (decision 10).
+  broker. An agent should not be able to establish a new identity (decision 10). The mechanism is
+  a one-time enrollment code with a short repeat window for retries (owner, 2026-10-31, #19).
 - **Bind session tokens to source IP:** TTL and revocation are enough to start (decision 11).
 - **Build on Agent Vault:** keep it separate, borrow ideas (decision 13).
 - **License:** Apache-2.0, chosen over GPL on 2026-10-31 (decision 16, #4).
