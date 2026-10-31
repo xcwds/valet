@@ -38,7 +38,7 @@ func TestAuditTailShowsTheLifecycle(t *testing.T) {
 		}
 		actions = append(actions, r.Action)
 	}
-	if got := strings.Join(actions, ","); got != "master_key.record,valetd.start,valetd.stop" {
+	if got := strings.Join(actions, ","); got != "master_key.record,admin_token.create,valetd.start,valetd.stop" {
 		t.Errorf("actions = %s", got)
 	}
 }
@@ -58,7 +58,7 @@ func TestAuditTailFiltersAndEnv(t *testing.T) {
 func TestAuditVerify(t *testing.T) {
 	_, dataDir := startedDataDir(t)
 	code, stdout, stderr := run(t, context.Background(), nil, "valet", "audit", "verify", "--data-dir", dataDir)
-	if code != ExitOK || !strings.Contains(stdout, "ok: 3 events") {
+	if code != ExitOK || !strings.Contains(stdout, "ok: 4 events") {
 		t.Fatalf("code %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }

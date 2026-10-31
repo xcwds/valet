@@ -41,7 +41,7 @@ func TestRun(t *testing.T) {
 		{"valetd.exe version", []string{`C:\valet\valetd.exe`, "version"}, ExitOK, "valetd v0.0.0-test\n", ""},
 		{"valet daemon version", []string{"valet", "daemon", "version"}, ExitOK, "valetd v0.0.0-test\n", ""},
 		{"name containing valetd is not valetd", []string{"notvaletd", "version"}, ExitOK, "valet v0.0.0-test\n", ""},
-		{"job not yet", []string{"valet", "job", "create"}, ExitError, "", "not implemented yet (#9)"},
+		{"job create needs a role", []string{"valet", "job", "create"}, ExitUsage, "", "--role is required"},
 		{"session not yet", []string{"valet", "session", "login"}, ExitError, "", "not implemented yet (#19)"},
 		{"approve not yet", []string{"valet", "approve", "x"}, ExitError, "", "not implemented yet (#23)"},
 	}

@@ -19,6 +19,9 @@ cp valet.example.yaml valet.yaml   # set data_dir; for local runs, log.format: t
 bin/valet secrets init-key --out master.key   # and point master_key.file at it
 bin/valetd --config valet.yaml
 bin/valet status                   # in another terminal
+export VALET_DATA_DIR=...          # the data_dir above; the CLI reads admin.token from it
+bin/valet job create --role reviewer --repo xcwds/site
+bin/valet audit tail
 ```
 
 `valet.yaml` is git-ignored; `valet.example.yaml` documents every setting and its

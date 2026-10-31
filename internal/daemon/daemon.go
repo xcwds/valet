@@ -37,6 +37,12 @@ type Options struct {
 	// Health reports whether valetd's dependencies (the database) work;
 	// /healthz answers 503 while it returns an error.
 	Health func(context.Context) error
+	// Admin serves /api/ on the admin port. It must authenticate operators
+	// itself; nil leaves /api/ unrouted (404).
+	Admin http.Handler
+	// Agent serves the agent port. It must authenticate sessions itself;
+	// nil refuses every request.
+	Agent http.Handler
 }
 
 type listener struct {
@@ -55,8 +61,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 		name, addr string
 		srv        *http.Server
 	}{
-		{"admin", cfg.Listen.Admin, adminServer(opts.Health, log)},
-		{"agent", cfg.Listen.Agent, agentServer()},
+		{"admin", cfg.Listen.Admin, adminServer(opts.Health, opts.Admin, log)},
+		{"agent", cfg.Listen.Agent, agentServer(opts.Agent)},
 		{"egress", cfg.Listen.Egress, egressServer()},
 	}
 
@@ -130,7 +136,7 @@ var testAdminHandler http.Handler
 const healthTimeout = 2 * time.Second
 
 // adminServer serves the operator API. For now: /healthz.
-func adminServer(health func(context.Context) error, log *slog.Logger) *http.Server {
+func adminServer(health func(context.Context) error, api http.Handler, log *slog.Logger) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		status, code := "ok", http.StatusOK
@@ -147,6 +153,9 @@ func adminServer(health func(context.Context) error, log *slog.Logger) *http.Ser
 		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": status, "version": version.String()})
 	})
+	if api != nil {
+		mux.Handle("/api/", api)
+	}
 	var h http.Handler = mux
 	if testAdminHandler != nil {
 		h = testAdminHandler
@@ -164,9 +173,12 @@ func adminServer(health func(context.Context) error, log *slog.Logger) *http.Ser
 // agentServer will serve MCP (#14) and the git proxy (#17). Both stream
 // (MCP responses, git packs), so there is no read or write timeout; the
 // header timeout still bounds slow-loris clients.
-func agentServer() *http.Server {
+func agentServer(h http.Handler) *http.Server {
+	if h == nil {
+		h = refuse("no agent endpoints are enabled yet")
+	}
 	return &http.Server{
-		Handler:           refuse("no agent endpoints are enabled yet"),
+		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,

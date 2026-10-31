@@ -16,7 +16,8 @@ Go, one module (`github.com/xcwds/valet`), one static binary built from `cmd/val
 - In Claude Code cloud containers the preinstalled `golangci-lint` is too old for this module and
   `vuln.go.dev` is blocked; see AGENTS.md (Cloud containers).
 - Never commit a secret, key or token, not even a test one that looks real. Tests generate keys at
-  run time.
+  run time. Never take a token or secret as a command-line flag value (it lands in shell history
+  and `ps`): read it from a file, stdin or the environment.
 - Core code (`internal/` outside `internal/connector/<name>`) never imports a specific connector or
   knows about GitHub (RFC decision 7). Route through the connector interface.
 - Deny by default (RFC decision 5): a missing rule, an unknown action, a parse error or a timeout

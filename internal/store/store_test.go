@@ -69,7 +69,7 @@ func TestFreshDatabase(t *testing.T) {
 		t.Errorf("lock file: %v", err)
 	}
 	got := strings.Join(tables(t, s.Read()), ",")
-	if want := "audit_events,jobs,master_keys,schema_migrations,secrets,sessions"; got != want {
+	if want := "admin_tokens,audit_events,jobs,master_keys,schema_migrations,secrets,sessions"; got != want {
 		t.Errorf("tables = %s, want %s", got, want)
 	}
 	if vs := versions(t, s.Read()); len(vs) != builtinCount(t) || vs[0] != 1 {
