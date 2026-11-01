@@ -15,6 +15,10 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
  && mkdir -m 0700 /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
+# Links the package on ghcr.io to this repository (and its Actions access).
+LABEL org.opencontainers.image.source="https://github.com/xcwds/valet" \
+      org.opencontainers.image.description="Valet: a credential broker for AI coding agents" \
+      org.opencontainers.image.licenses="Apache-2.0"
 COPY --from=build --chown=65532:65532 /out/ /
 ENV VALET_DATA_DIR=/data
 VOLUME /data
