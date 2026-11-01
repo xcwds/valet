@@ -301,6 +301,10 @@ reaches GitHub. See [docs/git.md](../git.md).
 - A bot approval therefore never satisfies merge requirements, even if a policy bug lets one
   through.
 
+The rulesets ship as JSON in `deploy/github/` with `apply.sh` and `check.sh`, both run with the
+operator's own `gh` login: reading rulesets needs Administration, which the App never has. A tag
+ruleset joins them. See [docs/github-rulesets.md](../github-rulesets.md).
+
 **GraphQL.** The MCP path uses REST or explicit GraphQL inside the connector, so it never needs to
 classify GraphQL. If the optional egress proxy lets `gh` through later, its classifier must parse
 the GraphQL operation and map known mutations (`mergePullRequest`, `addPullRequestReview`) to

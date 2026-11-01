@@ -64,8 +64,8 @@ A role not listed under `permissions` gets no GitHub token at all. Levels are `r
 
 ## 5. Protect your branches
 
-Valet's policy is the first wall; GitHub's rulesets are the second (RFC decision 4). See the
-rulesets guide (#21) and keep the App off every bypass list.
+Valet's policy is the first wall; GitHub's rulesets are the second (RFC decision 4). Apply and
+check them with [github-rulesets.md](github-rulesets.md), and keep the App off every bypass list.
 
 ## How tokens behave
 

@@ -138,6 +138,9 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   `ghcr.io/xcwds/valet:dev` from `main`. In a cloud container, start `dockerd` yourself; containers
   there have no internet, so build from a context with `go mod vendor` and run
   `SMOKE_OFFLINE=1 deploy/smoke.sh`.
+- `deploy/github/`: the second wall's rulesets as JSON (protected branches, `agent/**`, tags) with
+  `apply.sh` and `check.sh`, run with the operator's `gh` (`docs/github-rulesets.md`); never give the
+  App Administration to do it. `e2e/rulesets_test.go` runs both scripts against a fake `gh`.
 - `e2e/`: the RFC's demo scenarios against a real valetd (in-process, temp data dir, generated
   keys), a fake GitHub that records every call and enforces each token's grant like GitHub does,
   an ntfy sink, and an MCP client holding only a session token. `Start(t)` wires it all; helpers
