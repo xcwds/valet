@@ -29,9 +29,12 @@ func TestReviewerScenario(t *testing.T) {
 	}
 
 	// 1. A comment goes through, with a token narrowed to the job.
-	if isErr, text := agent.Call(t, "github_pr_comment", map[string]any{"repo": "xcwds/site", "number": 7, "body": "LGTM apart from the typo."}); isErr {
+	var replies []string
+	isErr, text := agent.Call(t, "github_pr_comment", map[string]any{"repo": "xcwds/site", "number": 7, "body": "LGTM apart from the typo."})
+	if isErr {
 		t.Fatalf("comment refused: %s", text)
 	}
+	replies = append(replies, text)
 	grants := v.GitHub.Grants()
 	if len(grants) != 1 {
 		t.Fatalf("%d tokens minted, want 1", len(grants))
@@ -48,10 +51,11 @@ func TestReviewerScenario(t *testing.T) {
 	}
 
 	// 2. Approving is denied before anything reaches GitHub, and alerts.
-	isErr, text := agent.Call(t, "github_pr_review_submit", map[string]any{"repo": "xcwds/site", "number": 7, "event": "APPROVE"})
+	isErr, text = agent.Call(t, "github_pr_review_submit", map[string]any{"repo": "xcwds/site", "number": 7, "event": "APPROVE"})
 	if !isErr || !strings.Contains(text, "never-approve") {
 		t.Errorf("approve: error=%v %q", isErr, text)
 	}
+	replies = append(replies, text)
 	approve := v.Ntfy.WaitFor(t, "github.pr.review.submit")
 	if approve.Priority != "high" || !strings.Contains(approve.Body, "rule: reviewer/never-approve") ||
 		!strings.Contains(approve.Body, `"event":"APPROVE"`) || !strings.HasPrefix(approve.Click, "https://valet.test/audit/") {
@@ -64,6 +68,7 @@ func TestReviewerScenario(t *testing.T) {
 	if !isErr || !strings.Contains(text, "never-merge") {
 		t.Errorf("merge: error=%v %q", isErr, text)
 	}
+	replies = append(replies, text)
 	v.Ntfy.WaitFor(t, "github.pr.merge")
 
 	// Nothing but the comment (and its PR check) reached GitHub, and one token was minted.
@@ -92,7 +97,7 @@ func TestReviewerScenario(t *testing.T) {
 	}
 
 	// No upstream token anywhere an operator or agent could see it.
-	for where, s := range map[string]string{"logs": v.Logs(), "audit": v.MustCLI(t, "", "audit", "tail", "-n", "1000"), "reply": text} {
+	for where, s := range map[string]string{"logs": v.Logs(), "audit": v.MustCLI(t, "", "audit", "tail", "-n", "1000"), "replies": strings.Join(replies, "\n")} {
 		if strings.Contains(s, g.Token) {
 			t.Errorf("the GitHub token leaked into the %s", where)
 		}

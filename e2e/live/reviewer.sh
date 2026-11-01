@@ -35,7 +35,17 @@ YAML
 
 "$VALET_BIN" daemon --config "$work/valet.yaml" >"$work/valetd.log" 2>&1 &
 pid=$!
-for _ in $(seq 50); do [ -f "$work/data/admin.token" ] && break; sleep 0.1; done
+# Ready once it logs "started"; stop waiting if it exits.
+for _ in $(seq 100); do
+	grep -q 'msg="\[valetd\] started"' "$work/valetd.log" 2>/dev/null && break
+	kill -0 "$pid" 2>/dev/null || break
+	sleep 0.1
+done
+if ! grep -q 'msg="\[valetd\] started"' "$work/valetd.log"; then
+	echo "valetd did not start:" >&2
+	cat "$work/valetd.log" >&2
+	exit 1
+fi
 "$VALET_BIN" secrets set github/app-key <"$VALET_LIVE_KEY_FILE"
 
 created=$("$VALET_BIN" job create --role reviewer --repo "$VALET_LIVE_REPO" --json)
@@ -44,9 +54,10 @@ job=$(sed -n 's/.*"id": *"\(job-[a-z0-9]*\)".*/\1/p' <<<"$created")
 [ -n "$token" ] && [ -n "$job" ] || { echo "job create: $created" >&2; exit 1; }
 
 # call TOOL ARGS_JSON: one stateless MCP tools/call; prints the response.
+# The token goes through a file descriptor, never curl's argv (visible in ps).
 call() {
 	curl -sS "http://$AGENT/mcp" \
-		-H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+		-H @<(printf 'Authorization: Bearer %s\n' "$token") -H 'Content-Type: application/json' \
 		-H 'Accept: application/json, text/event-stream' -H 'Mcp-Protocol-Version: 2025-06-18' \
 		--data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":$2}}"
 }
