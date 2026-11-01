@@ -384,6 +384,10 @@ ports.
    revokes the first.
 7. The agent port has no route that creates jobs or roles; only the admin port does.
 
+Built in #19: `valet job create --enroll` issues the code, `POST /enroll` on the agent port
+exchanges it, `valet session login` drives it from the container, and `valet job enroll <id>`
+re-enrolls. Codes are stored as SHA-256 like tokens. See [docs/enrollment.md](../enrollment.md).
+
 The window adds no new identity: it only hands back the token the same code already produced. Its
 one cost is that a process which copied the code before login finished can fetch that token within
 the window. That is harmless because the agent may read its own token anyway (decision 17).

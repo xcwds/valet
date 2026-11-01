@@ -42,7 +42,7 @@ func TestRun(t *testing.T) {
 		{"valet daemon version", []string{"valet", "daemon", "version"}, ExitOK, "valetd v0.0.0-test\n", ""},
 		{"name containing valetd is not valetd", []string{"notvaletd", "version"}, ExitOK, "valet v0.0.0-test\n", ""},
 		{"job create needs a role", []string{"valet", "job", "create"}, ExitUsage, "", "--role is required"},
-		{"session not yet", []string{"valet", "session", "login"}, ExitError, "", "not implemented yet (#19)"},
+		{"session login needs a code", []string{"valet", "session", "login", "--code-file", "/nonexistent/code"}, ExitError, "", "reading the enrollment code"},
 		{"approve not yet", []string{"valet", "approve", "x"}, ExitError, "", "not implemented yet (#23)"},
 	}
 	for _, tt := range tests {

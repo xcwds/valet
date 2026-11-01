@@ -34,6 +34,7 @@ const (
 	InterfaceEgress = "egress"
 	InterfaceAdmin  = "admin"
 	InterfaceCLI    = "cli"
+	InterfaceEnroll = "enroll" // a container exchanging its enrollment code (#19)
 	InterfaceSystem = "system" // valetd itself: start-up, key checks
 )
 
@@ -48,7 +49,7 @@ const (
 )
 
 var (
-	interfaces = map[string]bool{InterfaceMCP: true, InterfaceGit: true, InterfaceEgress: true, InterfaceAdmin: true, InterfaceCLI: true, InterfaceSystem: true}
+	interfaces = map[string]bool{InterfaceMCP: true, InterfaceGit: true, InterfaceEgress: true, InterfaceAdmin: true, InterfaceCLI: true, InterfaceEnroll: true, InterfaceSystem: true}
 	decisions  = map[string]bool{Allow: true, Deny: true, RequireApproval: true, Approved: true, Rejected: true, Info: true}
 	actionName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 )

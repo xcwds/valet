@@ -52,7 +52,12 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   database directly, read-only and without the lock.
 - `internal/tokens`: `vlt_sess_`, `vlt_admin_`, `vlt_enroll_` tokens (256 random bits, lowercase
   base32), stored only as SHA-256. `Parse` checks the kind, so one kind never passes for another.
-- `internal/jobs`: jobs and their session (create, get, list, revoke, all audited);
+- `internal/jobs`: jobs and their session (create, get, list, revoke, all audited). Enrollment
+  (`enroll.go`, #19): `CreateForEnrollment` stores a job with a one-time code instead of a session;
+  `Enroll` (`POST /enroll` on the agent port, outside `RequireSession`) creates the one session on
+  first use, and within the repeat window answers retries with the exact same bytes from memory
+  (never stored; filled before commit so a racing retry finds it); everything else is a generic
+  `ErrEnrollRefused`, audited and alerted. `Reenroll` revokes the session for a new code.
   `RequireSession` wraps the agent port (Bearer, or the basic-auth password git sends) and puts a
   `Principal` in the request context. Expiry is derived from `expires_at` on every request. A
   request with no `Authorization` at all is only challenged (401, not audited or throttled): git

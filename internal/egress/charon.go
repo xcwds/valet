@@ -239,6 +239,14 @@ func (c *Charon) CloseJob(jobID string) {
 		}
 	}
 	c.ended[jobID] = now.Add(jobs.MaxTTL) // outlives any token for the job
+	c.mu.Unlock()
+	c.CloseTunnels(jobID)
+}
+
+// CloseTunnels closes the job's open tunnels but lets it open new ones:
+// for a re-enrollment, which revokes the session that opened them.
+func (c *Charon) CloseTunnels(jobID string) {
+	c.mu.Lock()
 	ts := c.tunnels[jobID]
 	delete(c.tunnels, jobID)
 	c.mu.Unlock()

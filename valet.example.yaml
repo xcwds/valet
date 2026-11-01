@@ -50,6 +50,14 @@ log:
 #     - sum.golang.org
 #   ports: [443]
 
+# Enrollment: one-time codes containers exchange for their session at
+# start-up (valet job create --enroll; valet session login). See
+# docs/enrollment.md.
+# enrollment:
+#   code_ttl: 10m        # how long a code waits for its first use
+#   replay_window: 60s   # a retry within this gets the same answer (max 5m)
+#   max_replays: 5
+
 # Alerts: where denials and rules marked `alert: true` are reported. Delivery
 # is asynchronous and never slows or changes a decision; at most 5 alerts per
 # job per 10 minutes, then one summary. Messages carry the job, role, action,

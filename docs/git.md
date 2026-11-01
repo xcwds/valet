@@ -10,8 +10,8 @@ token narrowed to the job's repos and role). There is no TLS interception and no
 ## Agent setup
 
 Two pieces of git configuration: rewrite GitHub URLs to Valet, and hand git the session token as
-the password through a credential helper. The token comes from `$VALET_TOKEN` (or wherever the
-container keeps it); the username is ignored.
+the password through a credential helper. The token comes from `$VALET_TOKEN`, set from the file
+`valet session login` writes ([docs/enrollment.md](enrollment.md)); the username is ignored.
 
 ```sh
 git config --global url."http://valet:14401/git/github/".insteadOf https://github.com/

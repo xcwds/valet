@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -46,6 +47,20 @@ type Config struct {
 	Alerts Alerts `yaml:"alerts"`
 	// Egress configures Charon, the registry egress proxy (#18).
 	Egress Egress `yaml:"egress"`
+	// Enrollment tunes container enrollment codes (#19).
+	Enrollment Enrollment `yaml:"enrollment"`
+}
+
+// Enrollment tunes the one-time codes containers exchange for their
+// session. Unset fields take the defaults (10m, 60s, 5).
+type Enrollment struct {
+	// CodeTTL is how long a code stays usable for its first use.
+	CodeTTL time.Duration `yaml:"code_ttl"`
+	// ReplayWindow is how long after first use a retry with the same code
+	// gets the same response (at most 5m; 0 turns retries off).
+	ReplayWindow *time.Duration `yaml:"replay_window"`
+	// MaxReplays caps those retries per code.
+	MaxReplays *int `yaml:"max_replays"`
 }
 
 // Egress says where agents may open tunnels. Empty Allow denies every
