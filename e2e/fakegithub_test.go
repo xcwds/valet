@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
@@ -12,7 +13,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cgi"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -55,7 +59,11 @@ type FakeGitHub struct {
 	calls   []Call
 	grants  map[string]Grant
 	revoked []string
-	prs     map[int]bool // number → exists as a PR (else an issue)
+	prs     map[int]bool     // number → exists as a PR (else an issue)
+	pulls   []map[string]any // pull requests opened with POST /pulls
+
+	gitRoot string // bare repositories, gitRoot/owner/name.git
+	git     *cgi.Handler
 }
 
 // NewFakeGitHub starts it. PR #7 exists on every repository; #8 is an issue.
@@ -142,6 +150,8 @@ var repoPath = regexp.MustCompile(`^/repos/([a-z0-9._-]+/[a-z0-9._-]+)(/.*)?$`)
 // need says which permission an endpoint requires, as GitHub documents it.
 func need(method, rest string) (perm, level string) {
 	switch {
+	case method == http.MethodPost && rest == "/pulls":
+		return "pull_requests", "write"
 	case strings.HasSuffix(rest, "/merge"):
 		return "contents", "write"
 	case strings.HasSuffix(rest, "/comments"), strings.HasSuffix(rest, "/reviews"):
@@ -160,6 +170,10 @@ func allows(have, level string) bool {
 }
 
 func (f *FakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
+	if gitPath.MatchString(r.URL.Path) {
+		f.serveGit(w, r)
+		return
+	}
 	var body map[string]any
 	if b, _ := io.ReadAll(r.Body); len(b) > 0 {
 		_ = json.Unmarshal(b, &body)
@@ -244,6 +258,13 @@ func (f *FakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.Method == http.MethodPost && rest == "/pulls" {
+		f.pulls = append(f.pulls, body)
+		n := 100 + len(f.pulls)
+		reply(201, map[string]any{"number": n, "html_url": fmt.Sprintf("https://github.com/%s/pull/%d", repo, n)})
+		return
+	}
+
 	seg := strings.Split(strings.Trim(rest, "/"), "/")
 	number := 0
 	if len(seg) >= 2 {
@@ -271,4 +292,103 @@ func (f *FakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		reply(404, map[string]string{"message": "Not Found"})
 	}
+}
+
+// gitPath matches git smart-HTTP requests: /owner/name.git/...
+var gitPath = regexp.MustCompile(`^/([a-z0-9._-]+/[a-z0-9._-]+)\.git/`)
+
+// HostRepo creates a bare repository with one commit on main, served over
+// git smart HTTP at /owner/name.git like github.com. The connector is
+// pointed at it with git_url.
+func (f *FakeGitHub) HostRepo(repo string) {
+	f.t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		f.t.Skip("git not installed")
+	}
+	f.mu.Lock()
+	if f.gitRoot == "" {
+		f.gitRoot = f.t.TempDir()
+		out, err := exec.Command(git, "--exec-path").Output()
+		if err != nil {
+			f.mu.Unlock()
+			f.t.Fatal(err)
+		}
+		backend := filepath.Join(strings.TrimSpace(string(out)), "git-http-backend")
+		f.git = &cgi.Handler{Path: backend, Env: []string{"GIT_PROJECT_ROOT=" + f.gitRoot, "GIT_HTTP_EXPORT_ALL=1"}}
+	}
+	root := f.gitRoot
+	f.mu.Unlock()
+	work := f.t.TempDir()
+	bare := filepath.Join(root, repo+".git")
+	for _, args := range [][]string{
+		{"-C", work, "init", "-q", "-b", "main"},
+		{"-C", work, "-c", "user.name=owner", "-c", "user.email=owner@example.com", "commit", "-q", "--allow-empty", "-m", "initial"},
+		{"clone", "-q", "--bare", work, bare},
+		{"-C", bare, "config", "http.receivepack", "true"},
+	} {
+		if out, err := exec.Command(git, args...).CombinedOutput(); err != nil {
+			f.t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// Ref returns a ref's commit in a hosted repository, or "".
+func (f *FakeGitHub) Ref(repo, ref string) string {
+	out, _ := exec.Command("git", "--git-dir", filepath.Join(f.gitRoot, repo+".git"), "rev-parse", "--verify", "-q", ref).Output()
+	return strings.TrimSpace(string(out))
+}
+
+// Pulls returns the pull requests opened so far.
+func (f *FakeGitHub) Pulls() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.pulls)
+}
+
+// serveGit serves git smart HTTP for hosted repositories, accepting only an
+// installation token whose grant covers the repository, as GitHub does:
+// contents read to fetch, contents write to push.
+func (f *FakeGitHub) serveGit(w http.ResponseWriter, r *http.Request) {
+	repo := gitPath.FindStringSubmatch(r.URL.Path)[1]
+	user, tok, _ := r.BasicAuth()
+	push := strings.HasSuffix(r.URL.Path, "/git-receive-pack") || r.URL.Query().Get("service") == "git-receive-pack"
+	f.mu.Lock()
+	f.calls = append(f.calls, Call{Method: r.Method, Path: r.URL.Path, Token: tok})
+	g, ok := f.grants[tok]
+	handler := f.git
+	f.mu.Unlock()
+	level := "read"
+	if push {
+		level = "write"
+	}
+	switch {
+	case user != "x-access-token" || !ok:
+		w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
+		http.Error(w, "bad credentials", http.StatusUnauthorized)
+		return
+	case !slices.Contains(g.Repos, repo) || handler == nil:
+		http.Error(w, "Repository not found.", http.StatusNotFound)
+		return
+	case !allows(g.Permissions["contents"], level):
+		http.Error(w, "Permission denied", http.StatusForbidden)
+		return
+	}
+	if r.ContentLength < 0 {
+		// net/http/cgi refuses chunked bodies; GitHub takes them.
+		b, _ := io.ReadAll(r.Body)
+		r.Body, r.ContentLength, r.TransferEncoding = io.NopCloser(bytes.NewReader(b)), int64(len(b)), nil
+	}
+	handler.ServeHTTP(w, r)
+}
+
+// GitCalls returns the git requests that reached the fake, in order.
+func (f *FakeGitHub) GitCalls() []Call {
+	var out []Call
+	for _, c := range f.Calls() {
+		if gitPath.MatchString(c.Path) {
+			out = append(out, c)
+		}
+	}
+	return out
 }

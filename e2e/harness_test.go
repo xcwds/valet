@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,6 +30,7 @@ type Valet struct {
 	DataDir string
 	Admin   string // http://host:port
 	Agent   string
+	Egress  string // host:port of Charon
 	GitHub  *FakeGitHub
 	Ntfy    *NtfySink
 
@@ -51,8 +53,8 @@ func Start(t *testing.T) *Valet {
 	v := &Valet{DataDir: filepath.Join(dir, "data"), GitHub: gh, Ntfy: ntfy, logs: &syncBuffer{}}
 
 	connectors := write(t, dir, "connectors.yaml", fmt.Sprintf(
-		"github:\n  app_id: %q\n  installation_id: %d\n  private_key_secret: github/app-key\n  api_url: %s\n",
-		appID, installationID, gh.URL()))
+		"github:\n  app_id: %q\n  installation_id: %d\n  private_key_secret: github/app-key\n  api_url: %s\n  git_url: %s\n",
+		appID, installationID, gh.URL(), gh.URL()))
 	config := write(t, dir, "valet.yaml", fmt.Sprintf(`data_dir: %s
 listen: {admin: '127.0.0.1:0', agent: '127.0.0.1:0', egress: '127.0.0.1:0'}
 connectors: %s
@@ -82,9 +84,9 @@ alerts:
 	for v.Admin == "" {
 		sc := bufio.NewScanner(strings.NewReader(v.logs.String()))
 		for sc.Scan() {
-			var line struct{ Msg, Admin, Agent string }
+			var line struct{ Msg, Admin, Agent, Egress string }
 			if json.Unmarshal(sc.Bytes(), &line) == nil && line.Msg == "started" {
-				v.Admin, v.Agent = "http://"+line.Admin, "http://"+line.Agent
+				v.Admin, v.Agent, v.Egress = "http://"+line.Admin, "http://"+line.Agent, line.Egress
 			}
 		}
 		if v.Admin != "" {
@@ -131,7 +133,13 @@ type Job struct {
 // CreateJob creates a job through the CLI.
 func (v *Valet) CreateJob(t *testing.T, role string, repos ...string) Job {
 	t.Helper()
-	args := []string{"job", "create", "--role", role, "--json"}
+	return v.CreateJobTTL(t, role, time.Hour, repos...)
+}
+
+// CreateJobTTL creates a job that lasts ttl.
+func (v *Valet) CreateJobTTL(t *testing.T, role string, ttl time.Duration, repos ...string) Job {
+	t.Helper()
+	args := []string{"job", "create", "--role", role, "--ttl", ttl.String(), "--json"}
 	for _, r := range repos {
 		args = append(args, "--repo", r)
 	}
@@ -319,4 +327,21 @@ func write(t *testing.T, dir, name, body string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// Git runs git in dir as an agent holding only the job's session token:
+// GitHub URLs are rewritten to Valet's git proxy, and the documented
+// credential helper (docs/git.md) answers with the token. It returns the
+// combined output.
+func (v *Valet) Git(t *testing.T, j Job, dir string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{
+		"-c", "user.name=agent", "-c", "user.email=agent@example.com",
+		"-c", "url." + v.Agent + "/git/github/.insteadOf=https://github.com/",
+		"-c", `credential.helper=!f() { test "$1" = get && echo username=valet && echo "password=$VALET_TOKEN"; }; f`,
+	}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = []string{"HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "PATH=" + os.Getenv("PATH"), "VALET_TOKEN=" + j.Token}
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }

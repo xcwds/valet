@@ -145,8 +145,11 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   keys), a fake GitHub that records every call and enforces each token's grant like GitHub does,
   an ntfy sink, and an MCP client holding only a session token. `Start(t)` wires it all; helpers
   create jobs, call tools, read the audit trail and wait for alerts. Part of `go test ./...`; no
-  network. Add a milestone's scenario here as `<role>_test.go`. `e2e/live/` holds manual scripts
-  against a real App and sandbox repo (see its README); never run them in CI.
+  network. Add a milestone's scenario here as `<role>_test.go`. The fake GitHub also hosts real
+  git repositories (`HostRepo`, served by `git http-backend` and checked against each token's
+  grant), and `v.Git` runs real git as an agent. `e2e/live/` holds manual scripts against a real
+  App and sandbox repo (see its README); never run them in CI. `e2e/live/no-creds.sh` is the
+  exception: it runs inside any agent container, and `deploy/smoke.sh` runs it in CI.
 - `docs/`: the RFC and operator guides.
 - `site/`: valet.xcwds.com (GitHub Pages, `.github/workflows/site.yml` after CI passes on `main`):
   plain HTML and CSS, no build step, no scripts or third-party requests (`e2e/site_test.go`
