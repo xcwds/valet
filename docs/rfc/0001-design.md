@@ -174,6 +174,12 @@ type Connector interface {
 }
 ```
 
+A connector that hosts git repositories also implements `GitRemote` (canonical repo name, upstream
+smart-HTTP URL, how to attach its credential), which is all Ariadne needs to serve it at
+`/git/{provider}/…`. The `git.fetch` and `git.push` actions themselves are generic and live in core,
+marked as requestable only from the git interface; streaming interfaces use the pipeline's
+authorize step (resolve, policy, audit, then mint) and record the result when the transfer ends.
+
 Three ways to add a tool, in order of effort:
 
 1. **Declarative HTTP connector (YAML).** Covers most REST APIs with no code. Each action maps to a
@@ -282,7 +288,10 @@ user account and the App.
 **Git push ref checks.** Smart-HTTP `git-receive-pack` sends its ref-update commands as pkt-lines
 before the packfile: `<old-sha> <new-sha> <refname>`. Ariadne parses only that prefix, evaluates
 `git.push` with the list of refs (a new-sha of all zeros is a delete), then streams the rest
-through untouched. This gives per-job branch scoping without inspecting objects.
+through untouched. This gives per-job branch scoping without inspecting objects. The prefix is
+capped (256 KiB, 1000 refs); anything malformed, oversized or signed is denied. A denial answers
+with a `report-status` `ng` for every ref, so git prints the rule next to each one, and nothing
+reaches GitHub. See [docs/git.md](../git.md).
 
 **Defense in depth with rulesets.** Valet's policy is the first wall; GitHub is the second:
 
@@ -334,7 +343,9 @@ secrets:
 }
 ```
 
-The `insteadOf` rewrite sends every GitHub clone and push to Ariadne transparently. The session
+The `insteadOf` rewrite sends every GitHub clone and push to Ariadne transparently, and a
+credential helper scoped to Valet's URL hands git the session token as the basic-auth password
+(not `http.extraHeader`, which git would send to every host). The session
 token is fetched at start rather than baked into the image. Containers register on start-up to
 establish their identity (decision 10); an agent can't mint itself a new identity.
 

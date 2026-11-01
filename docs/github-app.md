@@ -53,6 +53,7 @@ github:
   installation_id: 7890123
   private_key_secret: github/app-key
   # api_url: https://github.example.com/api/v3   # GitHub Enterprise Server
+  # git_url: https://github.example.com          # and where it serves git (default https://github.com)
   # permissions:        # per role; omitted means the defaults below
   #   reviewer:    { contents: read,  pull_requests: write, checks: read, metadata: read }
   #   implementer: { contents: write, pull_requests: write, checks: read, metadata: read }

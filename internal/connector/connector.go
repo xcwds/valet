@@ -13,8 +13,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"reflect"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -45,6 +47,15 @@ type ActionSpec struct {
 	Risk   Risk
 	// Sensitive lists top-level params keys the audit log must redact.
 	Sensitive []string
+	// Interfaces lists the only interfaces (audit.InterfaceMCP, …) that may
+	// request this action; empty means any. git.push, for instance, comes
+	// only from the git proxy, so MCP neither offers nor runs it.
+	Interfaces []string
+}
+
+// Available reports whether iface may request the action.
+func (s ActionSpec) Available(iface string) bool {
+	return len(s.Interfaces) == 0 || slices.Contains(s.Interfaces, iface)
 }
 
 // Action is a request to perform an action.
@@ -91,6 +102,21 @@ type Connector interface {
 // to an action, so proxy traffic is judged in the same terms as MCP calls.
 type Classifier interface {
 	Classify(r *http.Request, body []byte) (*Action, error)
+}
+
+// GitRemote is implemented by connectors that host git repositories, so the
+// git proxy (Ariadne, #17) can reach them over smart HTTP. The provider in
+// /git/{provider}/{owner}/{repo}.git is the connector's Name(); the git
+// actions themselves (git.fetch, git.push) are generic and live in core.
+type GitRemote interface {
+	// GitRepo canonicalizes an owner/name from a URL path, or refuses it.
+	// Policy sees the canonical form.
+	GitRepo(raw string) (string, error)
+	// GitURL is the upstream smart-HTTP base for a canonical repo, e.g.
+	// https://github.com/owner/name.git.
+	GitURL(repo string) (*url.URL, error)
+	// GitAuth sets the upstream credential on an outgoing request.
+	GitAuth(r *http.Request, cred Credential)
 }
 
 // Revoker is implemented by connectors whose credentials can be revoked

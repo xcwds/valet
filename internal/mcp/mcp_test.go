@@ -39,6 +39,8 @@ rules:
     reason: no shouting
   - action: fake.echo
     decision: allow
+  - action: gitonly.push
+    decision: allow
 ---
 role: nobody
 rules:
@@ -67,7 +69,7 @@ func newFixture(t *testing.T, role string) *fixture {
 	log := logging.New(logs, "json", slog.LevelInfo)
 	alog := audit.New(db, log)
 	f := &fake.Connector{}
-	reg, err := connector.NewRegistry(f)
+	reg, err := connector.NewRegistry(f, gitOnly{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,5 +315,51 @@ func (*collider) Actions() []connector.ActionSpec {
 	return []connector.ActionSpec{
 		{Name: "a.b_c", Description: "d", Risk: connector.RiskLow, Params: obj()},
 		{Name: "a.b.c", Description: "d", Risk: connector.RiskLow, Params: obj()},
+	}
+}
+
+// gitOnly has an action only the git interface may request, like git.push.
+type gitOnly struct{}
+
+func (gitOnly) Name() string { return "gitonly" }
+func (gitOnly) Actions() []connector.ActionSpec {
+	return []connector.ActionSpec{{
+		Name: "push", Description: "Push.", Risk: connector.RiskHigh, Interfaces: []string{"git"},
+		Params: connector.Object(map[string]*jsonschema.Schema{"repo": {Type: "string"}}),
+	}}
+}
+
+func (gitOnly) Mint(context.Context, jobs.Job) (connector.Credential, error) {
+	return connector.Credential{}, errors.New("must not mint")
+}
+
+func (gitOnly) Execute(context.Context, connector.Credential, jobs.Job, connector.Action) (connector.Result, error) {
+	return connector.Result{}, errors.New("must not execute")
+}
+
+// An action for another interface is neither offered nor callable over
+// MCP, even when the role's policy would allow it.
+func TestOtherInterfacesActionsAreNotMCPTools(t *testing.T) {
+	f := newFixture(t, "echoer")
+	cs := f.session(t)
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range res.Tools {
+		if tool.Name == "gitonly_push" {
+			t.Fatal("gitonly_push offered over MCP")
+		}
+	}
+	call, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "gitonly_push", Arguments: map[string]any{"repo": "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !call.IsError || !strings.Contains(text(call), "unknown action") {
+		t.Errorf("call = %q", text(call))
+	}
+	trail := f.trail(t)
+	if last := trail[len(trail)-1]; last.Action != "gitonly.push" || last.Decision != "deny" {
+		t.Errorf("audit = %+v", last)
 	}
 }

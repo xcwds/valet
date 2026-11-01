@@ -54,7 +54,9 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   base32), stored only as SHA-256. `Parse` checks the kind, so one kind never passes for another.
 - `internal/jobs`: jobs and their session (create, get, list, revoke, all audited);
   `RequireSession` wraps the agent port (Bearer, or the basic-auth password git sends) and puts a
-  `Principal` in the request context. Expiry is derived from `expires_at` on every request.
+  `Principal` in the request context. Expiry is derived from `expires_at` on every request. A
+  request with no `Authorization` at all is only challenged (401, not audited or throttled): git
+  asks anonymously before every credential-helper run.
 - `internal/throttle`: failed authentications per source IP. The first 10 a minute are audited one
   by one, the crossing once as `throttled`, later ones get 429 with no write, so a flooding agent
   can't fill the disk or stall audit writes. Valid tokens are never throttled.
@@ -76,10 +78,14 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   job and on rate limits. The v1 actions (`actions.go`) are plain REST calls that return curated
   fields only; `repo` params must be canonical lowercase `owner/name` (schema pattern, rechecked in
   `Execute`), file paths are escaped per segment with `.`/`..` refused. Schemas must be trees:
-  build each from a constructor, never share one `*jsonschema.Schema`. Operator setup:
+  build each from a constructor, never share one `*jsonschema.Schema`. It is also a
+  `connector.GitRemote` (`git.go`): repos lowercased, `git_url` (default https://github.com) plus
+  `/{owner}/{name}.git`, token as the `x-access-token` password. Operator setup:
   `docs/github-app.md`.
 - `internal/pipeline`: the one path every agent request takes: resolve and validate → policy →
-  audit the decision → mint (cached) → execute → audit the result. Anything but an allow returns
+  audit the decision → mint (cached) → execute → audit the result. `Authorize` is the first half,
+  for interfaces that stream (git): it returns `*Allowed`, whose `Credential` mints and `Done`
+  records the result. An action whose spec lists `Interfaces` is unknown on any other interface. Anything but an allow returns
   `*pipeline.Denied` before minting; `require_approval` fails closed until #23. Until #11 valetd
   uses `pipeline.DenyAll`.
 - `internal/mcp`: Iris, MCP at `/mcp` on the agent port (`modelcontextprotocol/go-sdk`, stateless
@@ -88,6 +94,14 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   (`policy.MayAllow`); every `tools/call` (offered or not) goes through the pipeline via receiving
   middleware. Denials name the rule; other failures return only the upstream status. See
   `docs/mcp.md`.
+- `internal/gitproxy`: Ariadne, git smart HTTP at `/git/{provider}/{owner}/{repo}.git` on the agent
+  port (`docs/git.md`). Only the three smart-HTTP endpoints; each request is `git.fetch` or
+  `git.push` through `pipeline.Authorize`, then `httputil.ReverseProxy` with only git's headers and
+  the provider's credential (`connector.GitRemote`). Pushes: `ParseCommands` reads the pkt-lines
+  before the flush (capped), policy decides on every ref, and the read bytes plus the untouched rest
+  go upstream; a denial answers with report-status `ng` lines. The git actions live here
+  (`gitproxy.Actions`, registered by valetd) with `Interfaces: [git]`, so MCP never offers them.
+  Tests run real `git` against `git http-backend` through `net/http/cgi`.
 - `internal/policy`: Themis. Roles from YAML (`policies/roles.yaml` is built in), CEL conditions
   compiled and type-checked at load (`cel.dev/cel-go`; `job` and `action` are typed, `params` is
   dynamic), first match wins, no match or any evaluation error denies, cost limit and timeout per
@@ -102,9 +116,8 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with
   `-ldflags "-X github.com/xcwds/valet/internal/version.Version=…"`.
-- `internal/` (planned): one package per component, named for what it does (`config`, `store`,
-  `secrets`, `audit`, `jobs`, `policy`, `connector`, `connector/github`, `mcp`, `gitproxy`,
-  `egress`, `approval`, …).
+- `internal/` (planned): one package per component, named for what it does (`egress`,
+  `approval`, …).
 - `deploy/`: Dockerfile, `compose.yaml` and the example agent devcontainer.
 - `e2e/`: the RFC's demo scenarios against a real valetd (in-process, temp data dir, generated
   keys), a fake GitHub that records every call and enforces each token's grant like GitHub does,
