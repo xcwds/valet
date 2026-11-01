@@ -1,0 +1,58 @@
+# Valet for local agents (RFC Deployment). Run deploy/init.sh once, then:
+#   docker compose -f deploy/compose.yaml up -d
+#
+# Agents join agentnet, an internal network with no route out; Valet is the
+# only container on both it and egress, so it is their only exit. The admin
+# port listens on the egress network only (unreachable from agentnet) and
+# is published on the host's loopback; the agent ports are not published.
+name: valet
+
+services:
+  valet:
+    image: ${VALET_IMAGE:-ghcr.io/xcwds/valet:dev}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    command: ["--config", "/etc/valet/valet.yaml"]
+    # Non-root: the host user that owns ./data and ./secrets (init.sh writes
+    # them to .env), so the master key file can stay 0600.
+    user: "${VALET_UID:?run deploy/init.sh first}:${VALET_GID:?run deploy/init.sh first}"
+    environment:
+      VALET_ADMIN_ADDR: ${VALET_EGRESS_IP:-172.31.241.2}:14400
+      VALET_AGENT_ADDR: ${VALET_AGENTNET_IP:-172.31.240.2}:14401
+      VALET_EGRESS_ADDR: ${VALET_AGENTNET_IP:-172.31.240.2}:14402
+      # For `docker compose exec valet valet …`.
+      VALET_ADMIN_URL: http://${VALET_EGRESS_IP:-172.31.241.2}:14400
+    ports:
+      - "127.0.0.1:${VALET_ADMIN_PORT:-14400}:14400" # admin API/UI: this host only
+    volumes:
+      - ./data:/data
+      - ./valet.yaml:/etc/valet/valet.yaml:ro
+      - ./connectors.yaml:/etc/valet/connectors.yaml:ro
+    secrets: [master_key]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/valet", "status"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      agentnet:
+        ipv4_address: ${VALET_AGENTNET_IP:-172.31.240.2}
+        aliases: [valet]
+      egress:
+        ipv4_address: ${VALET_EGRESS_IP:-172.31.241.2}
+        gw_priority: 1 # the default route (and published ports) go via egress
+
+networks:
+  agentnet:
+    internal: true # no route out: Valet is the only exit
+    ipam:
+      config: [{ subnet: "${VALET_AGENTNET_SUBNET:-172.31.240.0/24}" }]
+  egress:
+    ipam:
+      config: [{ subnet: "${VALET_EGRESS_SUBNET:-172.31.241.0/24}" }]
+
+secrets:
+  master_key:
+    file: ./secrets/master.key

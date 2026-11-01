@@ -40,6 +40,12 @@ The CLI is `valet` and the daemon `valetd`.
 3. **Visible denials.** Every blocked attempt is audited and alerted.
 4. **Extensibility.** A second tool is added without changing Valet's core code.
 
+## Try it
+
+[docs/deploy.md](docs/deploy.md) runs Valet with Docker Compose and an agent devcontainer that has
+no route out but through Valet. Operator guides: [GitHub App](docs/github-app.md),
+[enrollment](docs/enrollment.md), [MCP](docs/mcp.md), [git](docs/git.md), [egress](docs/egress.md).
+
 ## Milestones
 
 | Milestone | Delivers                                                                   |
