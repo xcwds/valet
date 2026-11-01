@@ -336,7 +336,6 @@ secrets:
   "runArgs": ["--network=agentnet"],
   "containerEnv": {
     "VALET_URL": "http://valet:14401",
-    "HTTPS_PROXY": "http://valet:14402",
     "NO_PROXY": "valet"
   },
   "postStartCommand": "valet session login && git config --global url.http://valet:14401/git/github/.insteadOf https://github.com/"
@@ -351,7 +350,13 @@ establish their identity (decision 10); an agent can't mint itself a new identit
 
 **Package registries.** With an internal network, `npm install` and `pip install` fail. Charon,
 the egress proxy, runs in host-allowlist mode (plain CONNECT, no TLS interception) for registries
-such as npmjs.org, pypi.org and proxy.golang.org. Every CONNECT is logged.
+such as npmjs.org, pypi.org and proxy.golang.org. Every CONNECT carries the job's session token as
+the proxy password (`HTTPS_PROXY=http://agent:$TOKEN@valet:14402`, set after login), so tunnels
+are attributed and audited per job and close when the job ends; there is no unauthenticated mode
+(image builds run outside `agentnet`). Valet resolves each allowed name itself and refuses any
+non-public address, so an allowed name can't lead to the admin port, the LAN or cloud metadata.
+What a tunnel can't enforce (paths, uploads to an allowed host) is in
+[docs/egress.md](../egress.md).
 
 **Homelab.** The same image runs in its own LXC or VM on Proxmox, Postgres optional. Caddy fronts
 only the admin port with TLS. The agent VLAN's firewall allows outbound traffic only to Valet's

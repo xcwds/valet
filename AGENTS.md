@@ -102,6 +102,13 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   go upstream; a denial answers with report-status `ng` lines. The git actions live here
   (`gitproxy.Actions`, registered by valetd) with `Interfaces: [git]`, so MCP never offers them.
   Tests run real `git` against `git http-backend` through `net/http/cgi`.
+- `internal/egress`: Charon, HTTPS `CONNECT` tunnels on the egress port (`docs/egress.md`). Session
+  token from `Proxy-Authorization` (Basic password or Bearer; none is a 407 challenge, not
+  audited), then port, then the `egress.allow` list, then Valet resolves the name and refuses any
+  non-public address (`public` in `addr.go`) and dials the vetted IP. Audited directly as
+  `egress.connect` (decision, then bytes); denials go to the alerter. Not via Themis: host-only, the
+  RFC's one exception. Tunnels end at job expiry; `CloseJob` (on revoke) closes them. Tests use a
+  fake resolver and dialer.
 - `internal/policy`: Themis. Roles from YAML (`policies/roles.yaml` is built in), CEL conditions
   compiled and type-checked at load (`cel.dev/cel-go`; `job` and `action` are typed, `params` is
   dynamic), first match wins, no match or any evaluation error denies, cost limit and timeout per
@@ -116,8 +123,7 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with
   `-ldflags "-X github.com/xcwds/valet/internal/version.Version=…"`.
-- `internal/` (planned): one package per component, named for what it does (`egress`,
-  `approval`, …).
+- `internal/` (planned): one package per component, named for what it does (`approval`, …).
 - `deploy/`: Dockerfile, `compose.yaml` and the example agent devcontainer.
 - `e2e/`: the RFC's demo scenarios against a real valetd (in-process, temp data dir, generated
   keys), a fake GitHub that records every call and enforces each token's grant like GitHub does,
