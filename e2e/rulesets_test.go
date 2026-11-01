@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,7 +56,8 @@ func runScript(t *testing.T, script string, repo fakeRepo, args ...string) (stri
 	cmd.Env = append(os.Environ(), "GH="+gh, "FAKE_DIR="+data)
 	out, err := cmd.CombinedOutput()
 	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
 		code = ee.ExitCode()
 	} else if err != nil {
 		t.Fatal(err)
