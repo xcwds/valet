@@ -45,6 +45,7 @@ func Handler(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/jobs", d.listJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", d.getJob)
 	mux.HandleFunc("POST /api/jobs/{id}/revoke", d.revokeJob)
+	mux.HandleFunc("POST /api/jobs/{id}/enroll", d.enrollJob)
 	mux.HandleFunc("PUT /api/secrets/{name...}", d.putSecret)
 	mux.HandleFunc("GET /api/secrets", d.listSecrets)
 	mux.HandleFunc("DELETE /api/secrets/{name...}", d.deleteSecret)
@@ -122,11 +123,15 @@ type createJobRequest struct {
 	Role  string   `json:"role"`
 	Repos []string `json:"repos"`
 	TTL   string   `json:"ttl"`
+	// Enroll returns a one-time enrollment code instead of the session
+	// token: the container exchanges it at start-up (#19).
+	Enroll bool `json:"enroll"`
 }
 
 type createJobResponse struct {
-	Job   jobs.Job `json:"job"`
-	Token string   `json:"token"`
+	Job        jobs.Job         `json:"job"`
+	Token      string           `json:"token,omitempty"`
+	Enrollment *jobs.Enrollment `json:"enrollment,omitempty"`
 }
 
 func (d Deps) createJob(w http.ResponseWriter, r *http.Request) {
@@ -142,9 +147,16 @@ func (d Deps) createJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	job, token, err := d.Jobs.Create(r.Context(), jobs.CreateRequest{
-		Role: req.Role, Repos: req.Repos, TTL: ttl, CreatedBy: operatorName(r),
-	})
+	creq := jobs.CreateRequest{Role: req.Role, Repos: req.Repos, TTL: ttl, CreatedBy: operatorName(r)}
+	var resp createJobResponse
+	var err error
+	if req.Enroll {
+		var e jobs.Enrollment
+		resp.Job, e, err = d.Jobs.CreateForEnrollment(r.Context(), creq)
+		resp.Enrollment = &e
+	} else {
+		resp.Job, resp.Token, err = d.Jobs.Create(r.Context(), creq)
+	}
 	if errors.Is(err, jobs.ErrInvalid) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -153,7 +165,23 @@ func (d Deps) createJob(w http.ResponseWriter, r *http.Request) {
 		d.internal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, createJobResponse{Job: job, Token: token})
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+// enrollJob issues a fresh enrollment code for an active job, revoking its
+// session: the only way a job gets a second one.
+func (d Deps) enrollJob(w http.ResponseWriter, r *http.Request) {
+	e, err := d.Jobs.Reenroll(r.Context(), r.PathValue("id"), operatorName(r))
+	switch {
+	case errors.Is(err, jobs.ErrNotFound):
+		writeError(w, http.StatusNotFound, "job not found")
+	case errors.Is(err, jobs.ErrNotActive):
+		writeError(w, http.StatusConflict, "job is not active")
+	case err != nil:
+		d.internal(w, err)
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"enrollment": e})
+	}
 }
 
 func (d Deps) listJobs(w http.ResponseWriter, r *http.Request) {

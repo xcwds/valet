@@ -5,7 +5,7 @@ HTTP, statelessly: every request carries the job's session token and is authenti
 
 ## Claude Code
 
-With the session token from `valet job create` (or, once #19 lands, `valet session login`) in
+With the session token from `valet session login` ([docs/enrollment.md](enrollment.md)) or `valet job create` in
 `$VALET_SESSION`:
 
 ```sh

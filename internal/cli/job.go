@@ -26,6 +26,8 @@ func jobCmd(ctx context.Context, args []string, sys IO) int {
 		return jobShowCmd(ctx, args[1:], sys)
 	case "revoke":
 		return jobRevokeCmd(ctx, args[1:], sys)
+	case "enroll":
+		return jobEnrollCmd(ctx, args[1:], sys)
 	case "-h", "-help", "--help", "help":
 		_, _ = fmt.Fprint(sys.Stdout, jobUsage)
 		return ExitOK
@@ -38,8 +40,11 @@ func jobCmd(ctx context.Context, args []string, sys IO) int {
 const jobUsage = `Usage: valet job <subcommand> [flags]
 
 Subcommands:
-  create --role ROLE [--repo OWNER/NAME ...] [--ttl 1h]
-                 Create a job; prints its ID and session token (shown once)
+  create --role ROLE [--repo OWNER/NAME ...] [--ttl 1h] [--enroll]
+                 Create a job; prints its ID and session token (shown once),
+                 or with --enroll a one-time enrollment code for the
+                 container to exchange with 'valet session login'
+  enroll ID      Issue a new enrollment code, revoking the job's session
   list           List jobs, newest first
   show ID        Show a job
   revoke ID [--reason TEXT]
@@ -54,6 +59,7 @@ func jobCreateCmd(ctx context.Context, args []string, sys IO) int {
 	var repos stringList
 	fs.Var(&repos, "repo", "a repository the job may use, owner/name (repeatable)")
 	ttl := fs.Duration("ttl", jobs.DefaultTTL, "how long the job lasts")
+	enroll := fs.Bool("enroll", false, "print a one-time enrollment code instead of the session token")
 	asJSON := fs.Bool("json", false, "print the job and token as JSON")
 	conn := addAdminFlags(fs, sys.Getenv)
 	if _, code, ok := parseArgs(fs, args, 0); !ok {
@@ -67,10 +73,11 @@ func jobCreateCmd(ctx context.Context, args []string, sys IO) int {
 	if err != nil {
 		return fail(sys, "valet job create", err)
 	}
-	body, _ := json.Marshal(map[string]any{"role": *role, "repos": []string(repos), "ttl": ttl.String()})
+	body, _ := json.Marshal(map[string]any{"role": *role, "repos": []string(repos), "ttl": ttl.String(), "enroll": *enroll})
 	var resp struct {
-		Job   jobs.Job `json:"job"`
-		Token string   `json:"token"`
+		Job        jobs.Job         `json:"job"`
+		Token      string           `json:"token,omitempty"`
+		Enrollment *jobs.Enrollment `json:"enrollment,omitempty"`
 	}
 	if err := c.do(ctx, http.MethodPost, "api/jobs", strings.NewReader(string(body)), "application/json", &resp); err != nil {
 		return fail(sys, "valet job create", err)
@@ -79,9 +86,14 @@ func jobCreateCmd(ctx context.Context, args []string, sys IO) int {
 		_ = json.NewEncoder(sys.Stdout).Encode(resp)
 		return ExitOK
 	}
-	_, _ = fmt.Fprintf(sys.Stdout, "job:     %s\nrole:    %s\nrepos:   %s\nbranch:  %s\nexpires: %s\ntoken:   %s\n",
+	_, _ = fmt.Fprintf(sys.Stdout, "job:     %s\nrole:    %s\nrepos:   %s\nbranch:  %s\nexpires: %s\n",
 		resp.Job.ID, resp.Job.Role, strings.Join(resp.Job.Repos(), " "), resp.Job.BranchPattern,
-		resp.Job.ExpiresAt.Local().Format(time.RFC3339), resp.Token)
+		resp.Job.ExpiresAt.Local().Format(time.RFC3339))
+	if resp.Enrollment != nil {
+		printEnrollment(sys, *resp.Enrollment)
+		return ExitOK
+	}
+	_, _ = fmt.Fprintf(sys.Stdout, "token:   %s\n", resp.Token)
 	_, _ = fmt.Fprintln(sys.Stderr, "The token is shown once; give it to the agent and nowhere else.")
 	return ExitOK
 }
@@ -163,5 +175,42 @@ func jobRevokeCmd(ctx context.Context, args []string, sys IO) int {
 		return fail(sys, "valet job revoke", err)
 	}
 	_, _ = fmt.Fprintf(sys.Stdout, "revoked %s\n", pos[0])
+	return ExitOK
+}
+
+func printEnrollment(sys IO, e jobs.Enrollment) {
+	_, _ = fmt.Fprintf(sys.Stdout, "code:    %s\nuse by:  %s\n", e.Code, e.ExpiresAt.Local().Format(time.RFC3339))
+	_, _ = fmt.Fprintln(sys.Stderr, "Hand the code to the container as a file (a Docker secret or bind mount), not an env var;"+
+		" 'valet session login' exchanges it once for the job's session.")
+}
+
+func jobEnrollCmd(ctx context.Context, args []string, sys IO) int {
+	fs := newFlagSet("valet job enroll", sys.Stderr)
+	asJSON := fs.Bool("json", false, "print JSON")
+	conn := addAdminFlags(fs, sys.Getenv)
+	pos, code, ok := parseArgs(fs, args, 1)
+	if !ok {
+		return code
+	}
+	if !jobs.ValidID(pos[0]) {
+		_, _ = fmt.Fprintf(sys.Stderr, "valet job enroll: %q is not a job ID (job-xxxxxxxx)\n", pos[0])
+		return ExitUsage
+	}
+	c, err := conn.client(sys.Getenv)
+	if err != nil {
+		return fail(sys, "valet job enroll", err)
+	}
+	var resp struct {
+		Enrollment jobs.Enrollment `json:"enrollment"`
+	}
+	if err := c.do(ctx, http.MethodPost, "api/jobs/"+pos[0]+"/enroll", nil, "", &resp); err != nil {
+		return fail(sys, "valet job enroll", err)
+	}
+	if *asJSON {
+		_ = json.NewEncoder(sys.Stdout).Encode(resp)
+		return ExitOK
+	}
+	_, _ = fmt.Fprintf(sys.Stdout, "job:     %s (its previous session is revoked)\n", pos[0])
+	printEnrollment(sys, resp.Enrollment)
 	return ExitOK
 }

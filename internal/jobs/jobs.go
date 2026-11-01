@@ -16,9 +16,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xcwds/valet/internal/audit"
@@ -102,6 +104,12 @@ type Service struct {
 	now      func() time.Time
 	onRevoke []func(ctx context.Context, jobID string)
 	hasRole  func(string) bool
+
+	enroll            EnrollConfig
+	onSessionsRevoked []func(ctx context.Context, jobID string)
+	alerts            Alerter
+	replayMu          sync.Mutex
+	replays           map[string]*replay // by enrollment ID, for the repeat window
 }
 
 // RequireRoles makes Create refuse roles the policy doesn't define.
@@ -115,7 +123,10 @@ func (s *Service) OnRevoke(f func(ctx context.Context, jobID string)) {
 
 // NewService returns a Service.
 func NewService(db *store.Store, log *audit.Log) *Service {
-	return &Service{db: db, audit: log, throttle: throttle.New(throttle.DefaultLimit, throttle.DefaultWindow), now: time.Now}
+	return &Service{
+		db: db, audit: log, throttle: throttle.New(throttle.DefaultLimit, throttle.DefaultWindow), now: time.Now,
+		enroll: DefaultEnrollConfig(), replays: map[string]*replay{},
+	}
 }
 
 // CreateRequest describes a new job.
@@ -189,24 +200,45 @@ func ts(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 // never stored or shown again. The job, the session and the audit record
 // commit together.
 func (s *Service) Create(ctx context.Context, req CreateRequest) (Job, string, error) {
-	req, err := req.validate()
+	var token string
+	job, err := s.create(ctx, req, func(tx *sql.Tx, job Job, now time.Time) (map[string]any, string, error) {
+		sessionID, err := newID("ses-")
+		if err != nil {
+			return nil, "", err
+		}
+		var hash []byte
+		if token, hash, err = tokens.New(tokens.Session); err != nil {
+			return nil, "", err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO sessions (id, job_id, token_hash, created_at) VALUES (?, ?, ?, ?)`,
+			sessionID, job.ID, hash, ts(now)); err != nil {
+			return nil, "", fmt.Errorf("jobs: create session: %w", err)
+		}
+		return nil, sessionID, nil
+	})
 	if err != nil {
 		return Job{}, "", err
 	}
+	return job, token, nil
+}
+
+// create validates req and stores the job; extra runs in the same
+// transaction to add a session or an enrollment code, returning params to
+// audit and the session ID, if any.
+func (s *Service) create(ctx context.Context, req CreateRequest,
+	extra func(tx *sql.Tx, job Job, now time.Time) (map[string]any, string, error),
+) (Job, error) {
+	req, err := req.validate()
+	if err != nil {
+		return Job{}, err
+	}
 	if s.hasRole != nil && !s.hasRole(req.Role) {
-		return Job{}, "", fmt.Errorf("%w: role %q is not defined in the policy", ErrInvalid, req.Role)
+		return Job{}, fmt.Errorf("%w: role %q is not defined in the policy", ErrInvalid, req.Role)
 	}
 	id, err := newJobID()
 	if err != nil {
-		return Job{}, "", err
-	}
-	sessionID, err := newID("ses-")
-	if err != nil {
-		return Job{}, "", err
-	}
-	token, hash, err := tokens.New(tokens.Session)
-	if err != nil {
-		return Job{}, "", err
+		return Job{}, err
 	}
 	now := s.now().UTC()
 	job := Job{
@@ -224,7 +256,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Job, string, e
 	}
 	grants, err := json.Marshal(job.Grants)
 	if err != nil {
-		return Job{}, "", err
+		return Job{}, err
 	}
 
 	var rec audit.Record
@@ -236,26 +268,26 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (Job, string, e
 			ts(job.ExpiresAt), StateActive, job.CreatedBy, ts(now)); err != nil {
 			return fmt.Errorf("jobs: create: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO sessions (id, job_id, token_hash, created_at) VALUES (?, ?, ?, ?)`,
-			sessionID, job.ID, hash, ts(now)); err != nil {
-			return fmt.Errorf("jobs: create session: %w", err)
+		params := map[string]any{
+			"role": job.Role, "repos": job.Repos(), "ttl": job.TTL,
+			"branch_pattern": job.BranchPattern, "created_by": job.CreatedBy,
 		}
+		more, sessionID, err := extra(tx, job, now)
+		if err != nil {
+			return err
+		}
+		maps.Copy(params, more)
 		rec, err = s.audit.AppendTx(ctx, tx, audit.Event{
 			JobID: job.ID, SessionID: sessionID, Interface: audit.InterfaceAdmin,
-			Action: "job.create", Decision: audit.Allow,
-			Params: map[string]any{
-				"role": job.Role, "repos": job.Repos(), "ttl": job.TTL,
-				"branch_pattern": job.BranchPattern, "created_by": job.CreatedBy,
-			},
+			Action: "job.create", Decision: audit.Allow, Params: params,
 		})
 		return err
 	})
 	if err != nil {
-		return Job{}, "", err
+		return Job{}, err
 	}
 	s.audit.Emit(ctx, rec)
-	return job, token, nil
+	return job, nil
 }
 
 const selectJobs = `SELECT id, role, grants, branch_pattern, ttl_seconds, expires_at, state,
@@ -353,6 +385,10 @@ func (s *Service) Revoke(ctx context.Context, id, by, reason string) error {
 			`UPDATE sessions SET revoked_at = ? WHERE job_id = ? AND revoked_at IS NULL`, now, id); err != nil {
 			return fmt.Errorf("jobs: revoke sessions: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE enrollments SET revoked_at = ? WHERE job_id = ? AND revoked_at IS NULL`, now, id); err != nil {
+			return fmt.Errorf("jobs: revoke enrollments: %w", err)
+		}
 		rec, err = s.audit.AppendTx(ctx, tx, audit.Event{
 			JobID: id, Interface: audit.InterfaceAdmin, Action: "job.revoke", Decision: audit.Allow,
 			Params: map[string]any{"by": by, "reason": reason},
@@ -363,6 +399,7 @@ func (s *Service) Revoke(ctx context.Context, id, by, reason string) error {
 		return err
 	}
 	s.audit.Emit(ctx, rec)
+	s.dropReplays(id)
 	for _, f := range s.onRevoke {
 		f(context.WithoutCancel(ctx), id)
 	}

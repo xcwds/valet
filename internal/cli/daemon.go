@@ -157,6 +157,21 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	jobSvc.RequireRoles(pol.HasRole)
 	pl := pipeline.New(registry, pol, auditLog, creds, log)
 
+	// Enrollment codes (#19).
+	enrollCfg := jobs.DefaultEnrollConfig()
+	if cfg.Enrollment.CodeTTL != 0 {
+		enrollCfg.CodeTTL = cfg.Enrollment.CodeTTL
+	}
+	if cfg.Enrollment.ReplayWindow != nil {
+		enrollCfg.ReplayWindow = *cfg.Enrollment.ReplayWindow
+	}
+	if cfg.Enrollment.MaxReplays != nil {
+		enrollCfg.MaxReplays = *cfg.Enrollment.MaxReplays
+	}
+	if err := jobSvc.SetEnrollConfig(enrollCfg); err != nil {
+		_, _ = fmt.Fprintf(sys.Stderr, "valetd: enrollment: %v\n", err)
+		return ExitError
+	}
 	// Alerts: delivered in the background, never on the request path.
 	alerts, err := newAlerts(cfg.Alerts, secretStore, log)
 	if err != nil {
@@ -169,9 +184,12 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	// Charon: CONNECT tunnels to allowlisted registries on the egress port.
 	charon := egress.New(egress.Options{Allow: cfg.Egress.Allow, Ports: cfg.Egress.Ports}, jobSvc, auditLog, log)
 	jobSvc.OnRevoke(func(_ context.Context, jobID string) { charon.CloseJob(jobID) })
+	// Re-enrolling revokes the old session: close what it opened.
+	jobSvc.OnSessionsRevoked(func(_ context.Context, jobID string) { charon.CloseTunnels(jobID) })
 	if alerts != nil {
 		pl.SetAlerter(alerts)
 		charon.SetAlerter(alerts)
+		jobSvc.SetAlerter(alerts)
 		go func() { alerts.Run(alertCtx); close(alertsDone) }()
 	} else {
 		close(alertsDone)
@@ -205,8 +223,9 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		Admin: adminapi.Handler(adminapi.Deps{
 			Jobs: jobSvc, Operator: ops, Secrets: secretStore, AuditDB: st.Read(), Log: log,
 		}),
-		// Every request on the agent port carries a session token.
-		Agent: jobSvc.RequireSession(agentMux),
+		// Every request on the agent port carries a session token, except
+		// the enrollment exchange that gets one.
+		Agent: agentHandler(jobSvc, agentMux),
 		// Charon authenticates from Proxy-Authorization itself.
 		Egress: charon,
 	})
@@ -287,4 +306,13 @@ func checkAlertSecrets(ctx context.Context, cfg config.Alerts, s alert.SecretGet
 			log.Error("alert token secret unreadable; alerts will fail until it is stored", "notifier", name, "secret", n.TokenSecret, "err", err)
 		}
 	}
+}
+
+// agentHandler routes the agent port: /enroll for containers that have only
+// their enrollment code, everything else behind a session.
+func agentHandler(jobSvc *jobs.Service, sessions http.Handler) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle(jobs.EnrollPath, jobSvc.EnrollHandler())
+	mux.Handle("/", jobSvc.RequireSession(sessions))
+	return mux
 }

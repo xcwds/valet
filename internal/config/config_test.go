@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -134,6 +135,16 @@ func TestEgressConfig(t *testing.T) {
 	cfg, _ = Load("", envFrom(map[string]string{"VALET_DATA_DIR": "/d", "VALET_EGRESS_ALLOW": "pypi.org, *.golang.org,"}))
 	if !reflect.DeepEqual(cfg.Egress.Allow, []string{"pypi.org", "*.golang.org"}) {
 		t.Errorf("env: %v", cfg.Egress.Allow)
+	}
+}
+
+func TestEnrollmentConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "data_dir: /d\nenrollment: {code_ttl: 5m, replay_window: 0s, max_replays: 2}\n"), envFrom(nil))
+	if err != nil || cfg.Enrollment.CodeTTL != 5*time.Minute || cfg.Enrollment.ReplayWindow == nil || *cfg.Enrollment.ReplayWindow != 0 || *cfg.Enrollment.MaxReplays != 2 {
+		t.Fatalf("%+v %v", cfg.Enrollment, err)
+	}
+	if _, err := Load(writeConfig(t, "data_dir: /d\nenrollment: {code_ttl: soon}\n"), envFrom(nil)); err == nil {
+		t.Error("a bad duration loaded")
 	}
 }
 

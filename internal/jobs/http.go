@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -77,4 +78,44 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 func challenge(w http.ResponseWriter) {
 	w.Header().Set("WWW-Authenticate", `Bearer realm="valet", Basic realm="valet"`)
 	http.Error(w, "unauthenticated", http.StatusUnauthorized)
+}
+
+// EnrollPath is where containers exchange their enrollment code, on the
+// agent port, outside RequireSession (the caller has no session yet).
+const EnrollPath = "/enroll"
+
+// EnrollHandler serves POST /enroll {"code": "vlt_enroll_…"}. A refusal is
+// one generic 403 (the audit log has the reason); 429 means throttled and
+// 503 a transient failure worth retrying with the same code.
+func (s *Service) EnrollHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Code string `json:"code"`
+		}
+		// An unreadable body is a malformed code: refused and audited.
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req)
+		body, err := s.Enroll(r.Context(), req.Code, throttle.Source(r))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		switch {
+		case err == nil:
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			_, _ = w.Write(body) //nolint:gosec // G705: JSON Valet marshaled, served as application/json
+		case errors.Is(err, ErrThrottled):
+			w.Header().Set("Retry-After", strconv.Itoa(s.throttle.RetryAfter()))
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"too many failed attempts"}`))
+		case errors.Is(err, ErrEnrollRefused):
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"enrollment refused"}`))
+		default:
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"try again"}`))
+		}
+	})
 }

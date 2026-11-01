@@ -65,7 +65,9 @@ func Run(ctx context.Context, args []string, sys IO) int {
 		return adminCmd(ctx, rest, sys)
 	case "policy":
 		return policyCmd(ctx, rest, sys)
-	case "approve", "reject", "approvals", "session":
+	case "session":
+		return sessionCmd(ctx, rest, sys)
+	case "approve", "reject", "approvals":
 		return notYet(cmd, sys)
 	case "help", "-h", "-help", "--help":
 		_, _ = fmt.Fprint(sys.Stdout, usageText)
@@ -88,7 +90,6 @@ var plannedIn = map[string]string{
 	"approve":   "#23",
 	"reject":    "#23",
 	"approvals": "#23",
-	"session":   "#19",
 }
 
 func notYet(cmd string, sys IO) int {
@@ -141,7 +142,8 @@ const usageText = `Usage: valet <command> [flags]
 Commands:
   version   Print the version
   status    Ask a running valetd whether it is healthy
-  job       Create, list, show and revoke jobs
+  job       Create, list, show, enroll and revoke jobs
+  session   In a container: exchange the enrollment code for the job's session
   secrets   Manage the secret store (init-key, set, list, delete)
   audit     Read and verify the audit log (tail, verify)
   admin     Recover operator access (reset-token)
@@ -149,7 +151,7 @@ Commands:
   daemon    Run the broker daemon (same as running the binary as valetd)
   help      Show this help
 
-Coming with later issues: approve, reject, approvals, session.
+Coming with later issues: approve, reject, approvals.
 
 Run 'valet <command> -h' for a command's flags.
 `
