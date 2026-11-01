@@ -64,6 +64,52 @@ jobs:
           kill -TERM %1
           wait %1
 
+  deploy:
+    name: Deploy smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the image
+        run: docker build -f deploy/Dockerfile --build-arg VERSION="ci-${GITHUB_SHA::12}" -t ghcr.io/xcwds/valet:dev .
+
+      # Valet plus an agent container on agentnet: no route out, registries
+      # only through Charon, admin port unreachable, git routed to Ariadne.
+      - name: Smoke test deploy/
+        run: deploy/smoke.sh
+
+  publish:
+    name: Publish image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, lint, vulncheck, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write # ghcr.io/xcwds/valet, nothing else
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build and push ghcr.io/xcwds/valet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          sha=${GITHUB_SHA::12}
+          docker build -f deploy/Dockerfile --build-arg VERSION="main-$sha" \
+            -t ghcr.io/xcwds/valet:dev -t "ghcr.io/xcwds/valet:sha-$sha" .
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker push ghcr.io/xcwds/valet:dev
+          docker push "ghcr.io/xcwds/valet:sha-$sha"
+          docker logout ghcr.io
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

@@ -313,32 +313,42 @@ Valet is the only container on both that network and the outside one, so it is t
 exit.
 
 ```yaml
-# compose.yaml (Valet side)
+# deploy/compose.yaml (abridged)
 services:
   valet:
     image: ghcr.io/xcwds/valet:dev
+    user: ${VALET_UID}:${VALET_GID} # non-root: the owner of ./data and the key
+    environment:
+      VALET_ADMIN_ADDR: 172.31.241.2:14400 # egress network only
+      VALET_AGENT_ADDR: 172.31.240.2:14401 # agentnet only, not published
+      VALET_EGRESS_ADDR: 172.31.240.2:14402
     ports: ['127.0.0.1:14400:14400'] # admin UI/API, host only
-    volumes: [valet-data:/data]
-    secrets: [github_app_key, master_key]
-    networks: [agentnet, egress]
+    volumes: [./data:/data]
+    secrets: [master_key]
+    networks:
+      agentnet: { ipv4_address: 172.31.240.2, aliases: [valet] }
+      egress: { ipv4_address: 172.31.241.2, gw_priority: 1 }
 networks:
   agentnet: { internal: true } # no default route out
   egress: {}
-volumes: { valet-data: {} }
 secrets:
-  github_app_key: { file: ./secrets/github-app.pem }
   master_key: { file: ./secrets/master.key }
 ```
+
+The GitHub App key is not a file Valet reads: it is stored once in Hekate (`valet secrets set`).
+Compose's file secrets are bind mounts that keep the host file's owner and mode, so valetd runs as
+the host user who owns the key file and data directory rather than as a fixed image user; the key
+stays 0600. See [docs/deploy.md](../deploy.md).
 
 ```jsonc
 // .devcontainer/devcontainer.json
 {
-  "runArgs": ["--network=agentnet"],
+  "runArgs": ["--network=valet_agentnet"], // compose project "valet"
   "containerEnv": {
     "VALET_URL": "http://valet:14401",
     "NO_PROXY": "valet"
   },
-  "postStartCommand": "valet session login && git config --global url.http://valet:14401/git/github/.insteadOf https://github.com/"
+  "postStartCommand": "valet-setup" // valet session login, then git, HTTPS_PROXY and MCP
 }
 ```
 

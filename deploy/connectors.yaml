@@ -1,0 +1,10 @@
+# Upstreams. Without a section here no connector runs (MCP offers no
+# tools, git has no provider). For GitHub, follow docs/github-app.md, store
+# the App's key once with
+#   docker compose -f deploy/compose.yaml exec -T valet valet secrets set github/app-key < my-app.private-key.pem
+# and uncomment:
+#
+# github:
+#   app_id: "123456"
+#   installation_id: 7890123
+#   private_key_secret: github/app-key

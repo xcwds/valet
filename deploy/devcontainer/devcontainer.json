@@ -1,0 +1,30 @@
+// The agent's devcontainer (RFC Deployment). Copy this directory to your
+// project's .devcontainer/, start Valet (deploy/compose.yaml), create a job
+// with deploy/devcontainer/new-job.sh, then "Reopen in Container".
+{
+  "name": "agent (via Valet)",
+  "build": { "dockerfile": "Dockerfile" },
+  "features": {
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1": {}
+  },
+  // agentnet is internal: no route out, Valet is the only exit.
+  "runArgs": ["--network=valet_agentnet"],
+  // The one-time enrollment code, as a file (never an env var). The
+  // directory is mounted so login can delete the code once it's used.
+  "mounts": ["source=${localWorkspaceFolder}/.devcontainer/enroll,target=/run/valet-enroll,type=bind"],
+  "containerEnv": {
+    "VALET_URL": "http://valet:14401",
+    "VALET_ENROLL_CODE_FILE": "/run/valet-enroll/code",
+    "NO_PROXY": "valet",
+    "no_proxy": "valet",
+    // HTTPS_PROXY needs the session token, so valet-setup writes it to
+    // ~/.valet/env; this makes every bash, interactive or not, load it.
+    "BASH_ENV": "/home/vscode/.valet/env",
+    // Only api.anthropic.com is on Charon's list for Claude Code.
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  },
+  "remoteUser": "vscode",
+  // Exchange the code for the job's session, then point git, the proxy and
+  // MCP at Valet.
+  "postStartCommand": "valet-setup"
+}

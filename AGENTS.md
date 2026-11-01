@@ -129,7 +129,15 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
 - `internal/version`: the build's version, set with
   `-ldflags "-X github.com/xcwds/valet/internal/version.Version=…"`.
 - `internal/` (planned): one package per component, named for what it does (`approval`, …).
-- `deploy/`: Dockerfile, `compose.yaml` and the example agent devcontainer.
+- `deploy/` (`docs/deploy.md`): `Dockerfile` (static build on distroless, non-root, `/data`),
+  `compose.yaml` (`agentnet` internal; valetd binds admin to its fixed `egress` address and the
+  agent ports to its `agentnet` address; runs as the host uid from `init.sh`'s `.env`, because
+  compose file secrets keep the host file's owner and mode), `valet.yaml`, `connectors.yaml`, and
+  `devcontainer/` (agent image with the `valet` CLI, `valet-setup` at start, `new-job.sh` on the
+  host). `deploy/smoke.sh` checks it end to end and runs in CI; CI pushes
+  `ghcr.io/xcwds/valet:dev` from `main`. In a cloud container, start `dockerd` yourself; containers
+  there have no internet, so build from a context with `go mod vendor` and run
+  `SMOKE_OFFLINE=1 deploy/smoke.sh`.
 - `e2e/`: the RFC's demo scenarios against a real valetd (in-process, temp data dir, generated
   keys), a fake GitHub that records every call and enforces each token's grant like GitHub does,
   an ntfy sink, and an MCP client holding only a session token. `Start(t)` wires it all; helpers

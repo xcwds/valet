@@ -1,0 +1,5 @@
+# Created by init.sh and at run time: never commit them.
+/data/
+/secrets/
+/.env
+/devcontainer/enroll/

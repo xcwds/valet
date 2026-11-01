@@ -1,0 +1,10 @@
+# Only what the build needs.
+.git
+bin
+deploy/data
+deploy/secrets
+deploy/.env
+deploy/devcontainer/enroll
+**/*_test.go
+e2e
+docs

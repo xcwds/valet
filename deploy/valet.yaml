@@ -1,0 +1,28 @@
+# valetd's configuration inside the container (deploy/compose.yaml). The
+# listen addresses come from the compose file's environment, so the admin
+# port binds to the egress network only. See valet.example.yaml for every
+# setting.
+data_dir: /data
+master_key:
+  file: /run/secrets/master_key
+log:
+  format: text
+connectors: /etc/valet/connectors.yaml
+
+# Hosts agents may reach through Charon (docs/egress.md): package
+# registries, and the agent's own model API (RFC decision 12: its LLM
+# credential stays in the container for now).
+egress:
+  allow:
+    - api.anthropic.com
+    - registry.npmjs.org
+    - pypi.org
+    - files.pythonhosted.org
+    - proxy.golang.org
+    - sum.golang.org
+    - storage.googleapis.com
+
+# alerts:
+#   ntfy:
+#     url: https://ntfy.example.com/valet
+#     token_secret: ntfy/token
