@@ -3,8 +3,11 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -303,5 +306,41 @@ func TestFailedAuthIsThrottled(t *testing.T) {
 	}
 	if _, err := f.svc.Authenticate(ctx, "vlt_sess_bogus", audit.InterfaceMCP, "10.0.0.67"); !errors.Is(err, ErrUnauthenticated) {
 		t.Errorf("another source: %v", err)
+	}
+}
+
+// git asks anonymously before running its credential helper, on every
+// command. That challenge must not count as a failed login, or an agent
+// running a dozen git commands a minute would be throttled.
+func TestAnonymousRequestsAreChallengesNotFailures(t *testing.T) {
+	f := newFixture(t)
+	_, tok := f.create(t, CreateRequest{Role: "reviewer"})
+	before := len(f.auditTrail(t))
+	h := f.svc.RequireSession(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) }))
+	call := func(auth string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("GET", "/git/github/xcwds/site.git/info/refs?service=git-upload-pack", nil)
+		r.RemoteAddr = "10.0.0.9:1234"
+		if auth != "" {
+			r.Header.Set("Authorization", auth)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	for range 50 {
+		w := call("")
+		if w.Code != http.StatusUnauthorized || !strings.Contains(w.Header().Get("WWW-Authenticate"), "Basic") {
+			t.Fatalf("anonymous: %d %v", w.Code, w.Header())
+		}
+		if w := call("Basic " + base64.StdEncoding.EncodeToString([]byte("valet:"+tok))); w.Code != http.StatusTeapot {
+			t.Fatalf("with the token: %d", w.Code)
+		}
+	}
+	if got := len(f.auditTrail(t)) - before; got != 0 {
+		t.Errorf("%d audit records for anonymous challenges, want 0", got)
+	}
+	// A wrong token is still a failure: audited, and throttled.
+	if w := call("Bearer vlt_sess_bogus"); w.Code != http.StatusUnauthorized || len(f.auditTrail(t)) != before+1 {
+		t.Errorf("bad token: %d", w.Code)
 	}
 }

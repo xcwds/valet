@@ -94,10 +94,13 @@ func (i *Iris) serverFor(r *http.Request) *sdk.Server {
 	actions := i.reg.Actions()
 	sort.Strings(actions)
 	for _, a := range actions {
+		spec, _ := i.reg.Spec(a)
+		if !spec.Available(Interface) {
+			continue // e.g. git.push: only the git proxy may ask
+		}
 		if i.offer != nil && !i.offer.MayAllow(p.Job.Role, a) {
 			continue
 		}
-		spec, _ := i.reg.Spec(a)
 		action := a
 		srv.AddTool(&sdk.Tool{
 			Name:        i.actions[a],

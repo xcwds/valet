@@ -108,9 +108,69 @@ func New(reg *connector.Registry, policy Policy, log *audit.Log, cache *connecto
 // Run performs action for the authenticated session p. It returns *Denied
 // when the request was refused, and another error when it failed.
 func (pl *Pipeline) Run(ctx context.Context, p jobs.Principal, iface, action string, raw json.RawMessage) (connector.Result, error) {
+	ok, err := pl.Authorize(ctx, p, iface, action, raw)
+	if err != nil {
+		return connector.Result{}, err
+	}
+	c, _ := pl.reg.Connector(ok.Action.Connector)
+	cred, err := ok.Credential(ctx, c)
+	if err != nil {
+		return connector.Result{}, err
+	}
+	res, err := c.Execute(ctx, cred, p.Job, ok.Action)
+	ok.Done(res.UpstreamStatus, err)
+	return res, err
+}
+
+// Allowed is an authorized, audited request. Its caller performs it: fetch
+// the credential, act, then call Done exactly once with the outcome.
+type Allowed struct {
+	Action connector.Action
+	Params map[string]any // validated
+
+	pl     *Pipeline
+	job    jobs.Job
+	result audit.Event
+	done   bool
+}
+
+// Credential mints (or reuses) c's credential for the job. A failure is
+// recorded as the request's result, and Done must not be called.
+func (a *Allowed) Credential(ctx context.Context, c connector.Connector) (connector.Credential, error) {
+	cred, err := a.pl.cache.Get(ctx, c, a.job)
+	if err != nil {
+		a.Done(0, err)
+	}
+	return cred, err
+}
+
+// Done records the result: the upstream's status and any error.
+func (a *Allowed) Done(upstreamStatus int, err error) {
+	if a.done {
+		return
+	}
+	a.done = true
+	ev := a.result
+	ev.UpstreamStatus = upstreamStatus
+	if err != nil {
+		ev.Error = err.Error()
+	}
+	a.pl.record(context.Background(), ev)
+}
+
+// Authorize runs the pipeline up to the credential: resolve and validate,
+// policy, audit the decision. Anything but an allow is recorded and
+// returned as *Denied (or the audit error). Interfaces that stream, such as
+// the git proxy, use it directly; Run uses it for everything else.
+func (pl *Pipeline) Authorize(ctx context.Context, p jobs.Principal, iface, action string, raw json.RawMessage) (*Allowed, error) {
 	ev := audit.Event{JobID: p.Job.ID, SessionID: p.SessionID, Interface: iface, Action: action}
 
 	act, spec, params, err := pl.reg.Resolve(action, raw)
+	if err == nil && !spec.Available(iface) {
+		// Not on this interface: as far as the caller can tell, it
+		// doesn't exist.
+		err = connector.ErrUnknownAction
+	}
 	if err != nil {
 		reason, recorded := "unknown action", "unknown action"
 		if errors.Is(err, connector.ErrInvalidParams) {
@@ -126,55 +186,43 @@ func (pl *Pipeline) Run(ctx context.Context, p jobs.Principal, iface, action str
 		if !actionNameOK(action) {
 			ev.Action, ev.Params = "invalid", map[string]any{"requested": truncate(action, 128)}
 		}
-		return connector.Result{}, pl.denyAs(ctx, ev, p.Job.Role, "", reason, recorded, false)
+		return nil, pl.denyAs(ctx, ev, p.Job.Role, "", reason, recorded, false)
 	}
 	ev.Params, ev.Sensitive = params, spec.Sensitive
 
 	dec, err := pl.policy.Decide(ctx, Request{Job: p.Job, Interface: iface, Action: action, Spec: spec, Params: params})
 	role := p.Job.Role
 	if err != nil {
-		return connector.Result{}, pl.denyAs(ctx, ev, role, "policy-error", "policy evaluation failed: "+err.Error(), "policy evaluation failed: "+err.Error(), false)
+		return nil, pl.denyAs(ctx, ev, role, "policy-error", "policy evaluation failed: "+err.Error(), "policy evaluation failed: "+err.Error(), false)
 	}
 	switch dec.Effect {
 	case Allow:
 	case RequireApproval:
 		// Approvals arrive with #23; until then a parked request fails closed.
 		msg := "needs approval, and approvals are not available yet"
-		return connector.Result{}, pl.denyAs(ctx, ev, role, dec.Rule, msg, msg, dec.Alert)
+		return nil, pl.denyAs(ctx, ev, role, dec.Rule, msg, msg, dec.Alert)
 	case Deny:
-		return connector.Result{}, pl.denyAs(ctx, ev, role, dec.Rule, dec.Reason, dec.Reason, dec.Alert)
+		return nil, pl.denyAs(ctx, ev, role, dec.Rule, dec.Reason, dec.Reason, dec.Alert)
 	default:
 		msg := fmt.Sprintf("unknown policy effect %q", dec.Effect)
-		return connector.Result{}, pl.denyAs(ctx, ev, role, dec.Rule, msg, msg, dec.Alert)
+		return nil, pl.denyAs(ctx, ev, role, dec.Rule, msg, msg, dec.Alert)
 	}
 
 	ev.Decision, ev.Rule = audit.Allow, dec.Rule
 	decided, err := pl.audit.Append(ctx, ev)
 	if err != nil {
-		return connector.Result{}, fmt.Errorf("not recorded, so not done: %w", err)
+		return nil, fmt.Errorf("not recorded, so not done: %w", err)
 	}
 	if dec.Alert {
 		pl.alert(decided, role, dec.Reason, true)
 	}
-
-	result := audit.Event{
-		JobID: p.Job.ID, SessionID: p.SessionID, Interface: iface, Action: action, Decision: audit.Info,
-		Params: map[string]any{"result_of": decided.Seq},
-	}
-	c, _ := pl.reg.Connector(act.Connector)
-	cred, err := pl.cache.Get(ctx, c, p.Job)
-	if err != nil {
-		result.Error = err.Error()
-		pl.record(ctx, result)
-		return connector.Result{}, err
-	}
-	res, err := c.Execute(ctx, cred, p.Job, act)
-	result.UpstreamStatus = res.UpstreamStatus
-	if err != nil {
-		result.Error = err.Error()
-	}
-	pl.record(ctx, result)
-	return res, err
+	return &Allowed{
+		Action: act, Params: params, pl: pl, job: p.Job,
+		result: audit.Event{
+			JobID: p.Job.ID, SessionID: p.SessionID, Interface: iface, Action: action, Decision: audit.Info,
+			Params: map[string]any{"result_of": decided.Seq},
+		},
+	}, nil
 }
 
 // denyAs records a refusal, offers it to the alerter and returns it, with

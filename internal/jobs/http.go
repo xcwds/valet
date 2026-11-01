@@ -43,10 +43,19 @@ func interfaceFor(r *http.Request) string {
 }
 
 // RequireSession authenticates every request on the agent port before next
-// sees it. Failures get 401 and are audited; next finds the session with
+// sees it. A wrong token gets 401 and is audited (and throttled per source);
+// no credentials at all is just a challenge. next finds the session with
 // PrincipalFrom.
 func (s *Service) RequireSession(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			// A challenge, not a failed login: git asks anonymously first
+			// and only then runs its credential helper, every command.
+			// Nothing was guessed, so nothing is audited or throttled
+			// (and with no write, there's nothing to flood).
+			challenge(w)
+			return
+		}
 		p, err := s.Authenticate(r.Context(), SessionToken(r), interfaceFor(r), throttle.Source(r))
 		if err != nil {
 			if errors.Is(err, ErrThrottled) {
@@ -55,8 +64,7 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 				return
 			}
 			if errors.Is(err, ErrUnauthenticated) {
-				w.Header().Set("WWW-Authenticate", `Bearer realm="valet", Basic realm="valet"`)
-				http.Error(w, "unauthenticated", http.StatusUnauthorized)
+				challenge(w)
 				return
 			}
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -64,4 +72,9 @@ func (s *Service) RequireSession(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 	})
+}
+
+func challenge(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Bearer realm="valet", Basic realm="valet"`)
+	http.Error(w, "unauthenticated", http.StatusUnauthorized)
 }

@@ -10,6 +10,9 @@ import (
 // DefaultAPIURL is GitHub's REST API.
 const DefaultAPIURL = "https://api.github.com"
 
+// DefaultGitURL is github.com's git smart-HTTP base.
+const DefaultGitURL = "https://github.com"
+
 // Config is the github section of the connectors file.
 type Config struct {
 	// AppID is the GitHub App's ID (or client ID), the JWT issuer.
@@ -22,6 +25,9 @@ type Config struct {
 	PrivateKeySecret string `yaml:"private_key_secret"`
 	// APIURL is the REST API base, for GitHub Enterprise Server or tests.
 	APIURL string `yaml:"api_url"`
+	// GitURL is where repositories are cloned from (git smart HTTP), for
+	// GitHub Enterprise Server or tests. Default https://github.com.
+	GitURL string `yaml:"git_url"`
 	// Permissions narrow each role's tokens; roles not listed get no token.
 	// Omitted: the RFC's table (DefaultPermissions).
 	Permissions map[string]map[string]string `yaml:"permissions"`
@@ -60,6 +66,15 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Sprintf("api_url %q: must be https (http only for loopback, in tests)", c.APIURL))
 	}
 	c.APIURL = strings.TrimRight(c.APIURL, "/")
+	if c.GitURL == "" {
+		c.GitURL = DefaultGitURL
+	}
+	g, err := url.Parse(c.GitURL)
+	plainLoopback = g != nil && g.Scheme == "http" && isLoopback(g.Hostname())
+	if err != nil || g.Host == "" || g.User != nil || g.RawQuery != "" || (g.Scheme != "https" && !plainLoopback) {
+		errs = append(errs, fmt.Sprintf("git_url %q: must be https (http only for loopback, in tests)", c.GitURL))
+	}
+	c.GitURL = strings.TrimRight(c.GitURL, "/")
 	if c.Permissions == nil {
 		c.Permissions = DefaultPermissions()
 	}

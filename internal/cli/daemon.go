@@ -15,6 +15,7 @@ import (
 	"github.com/xcwds/valet/internal/connector"
 	"github.com/xcwds/valet/internal/connector/builtin"
 	"github.com/xcwds/valet/internal/daemon"
+	"github.com/xcwds/valet/internal/gitproxy"
 	"github.com/xcwds/valet/internal/jobs"
 	"github.com/xcwds/valet/internal/logging"
 	"github.com/xcwds/valet/internal/mcp"
@@ -125,7 +126,9 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
 	}
-	registry, err := connector.NewRegistry(conns...)
+	// The generic git actions (git.fetch, git.push) live in core; the
+	// providers' connectors supply the upstreams (#17).
+	registry, err := connector.NewRegistry(append(conns, gitproxy.Actions{})...)
 	if err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
 		return ExitError
@@ -170,7 +173,7 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	}
 	defer func() { stopAlerts(); <-alertsDone }()
 
-	// Iris: MCP at /mcp on the agent port. The git proxy (#17) joins it.
+	// Iris: MCP at /mcp on the agent port.
 	iris, err := mcp.New(registry, pl, pol, log)
 	if err != nil {
 		_, _ = fmt.Fprintf(sys.Stderr, "valetd: %v\n", err)
@@ -178,6 +181,8 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	}
 	agentMux := http.NewServeMux()
 	agentMux.Handle("/mcp", iris.Handler())
+	// Ariadne: git smart HTTP at /git/{provider}/{owner}/{repo}.git.
+	agentMux.Handle(gitproxy.Prefix, gitproxy.New(registry, pl, log))
 	agentMux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "not found: this port serves /mcp", http.StatusNotFound)
 	})
