@@ -394,3 +394,18 @@ func TestEnrollHandler(t *testing.T) {
 		t.Errorf("GET: %d", w.Code)
 	}
 }
+
+// Dropping a failed first use's entry must not drop a newer one.
+func TestDropReplayIfOnlyDropsItsOwnEntry(t *testing.T) {
+	f, _ := enrollFixture(t)
+	old := f.svc.putReplay("enr-x", "job-a", []byte("old"), f.now)
+	newer := f.svc.putReplay("enr-x", "job-a", []byte("new"), f.now)
+	f.svc.dropReplayIf("enr-x", old)
+	if body, _, reason := f.svc.takeReplay("enr-x", f.now); reason != "" || string(body) != "new" {
+		t.Fatalf("the newer entry was dropped: %q %q", body, reason)
+	}
+	f.svc.dropReplayIf("enr-x", newer)
+	if _, _, reason := f.svc.takeReplay("enr-x", f.now); reason == "" {
+		t.Error("the entry survived its own drop")
+	}
+}

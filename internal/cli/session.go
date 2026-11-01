@@ -70,6 +70,13 @@ func sessionLoginCmd(ctx context.Context, args []string, sys IO) int {
 	code := strings.TrimSpace(string(raw))
 
 	resp, status, err := exchange(ctx, strings.TrimRight(*url, "/")+jobs.EnrollPath, code, *budget, sys)
+	if err == nil {
+		// Save the token before the code goes: if this fails, the code
+		// still works for a retry within the repeat window.
+		if err := writeSecretFile(*tokenFile, []byte(resp.SessionToken+"\n")); err != nil {
+			return fail(sys, name, fmt.Errorf("writing the session token: %w", err))
+		}
+	}
 	if status != 0 {
 		// Valet answered: the code is spent (or refused for good), so it
 		// has no further use in the container.
@@ -79,9 +86,6 @@ func sessionLoginCmd(ctx context.Context, args []string, sys IO) int {
 	}
 	if err != nil {
 		return fail(sys, name, err)
-	}
-	if err := writeSecretFile(*tokenFile, []byte(resp.SessionToken+"\n")); err != nil {
-		return fail(sys, name, fmt.Errorf("writing the session token: %w", err))
 	}
 	_, _ = fmt.Fprintf(sys.Stderr, "enrolled as %s until %s; session token in %s\n",
 		resp.JobID, resp.ExpiresAt.Local().Format(time.RFC3339), *tokenFile)

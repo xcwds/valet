@@ -177,3 +177,22 @@ func TestNoJobCreationOnTheAgentPort(t *testing.T) {
 		}
 	}
 }
+
+// If the token can't be saved, the code stays for a retry.
+func TestSessionLoginKeepsTheCodeIfTheTokenCantBeSaved(t *testing.T) {
+	v := startValetd(t)
+	_, codeFile := enrollCode(t, v, "reviewer")
+	blocked := filepath.Join(t.TempDir(), "not-a-dir")
+	_ = os.WriteFile(blocked, nil, 0o600)
+	code, errOut := login(t, v.agent, codeFile, filepath.Join(blocked, "token"))
+	if code == ExitOK || !strings.Contains(errOut, "writing the session token") {
+		t.Fatalf("%d %s", code, errOut)
+	}
+	if _, err := os.Stat(codeFile); err != nil {
+		t.Fatal("the code was deleted though the token was never saved")
+	}
+	// A retry within the window gets the same session.
+	if code, errOut := login(t, v.agent, codeFile, filepath.Join(t.TempDir(), "token")); code != ExitOK {
+		t.Fatalf("retry: %d %s", code, errOut)
+	}
+}

@@ -201,7 +201,8 @@ func (s *Service) Enroll(ctx context.Context, code, source string) ([]byte, erro
 	var (
 		body          []byte
 		reason, jobID string
-		putReplay     string // an entry this call added, removed if the write fails
+		putReplay     *replay // the entry this call added, removed if the write fails
+		putID         string
 		rec           audit.Record
 	)
 	err = s.db.Write(ctx, func(tx *sql.Tx) error {
@@ -279,8 +280,7 @@ func (s *Service) Enroll(ctx context.Context, code, source string) ([]byte, erro
 			}
 			// Kept before commit, so a racing retry that sees used_at
 			// also finds the response.
-			s.putReplay(enrID, jobID, body, now)
-			putReplay = enrID
+			putReplay, putID = s.putReplay(enrID, jobID, body, now), enrID
 			rec, err = s.audit.AppendTx(ctx, tx, audit.Event{
 				JobID: jobID, SessionID: sessionID, Interface: audit.InterfaceEnroll, Action: "session.enroll", Decision: audit.Allow,
 				Params: map[string]any{"enrollment": enrID, "source": source},
@@ -290,8 +290,8 @@ func (s *Service) Enroll(ctx context.Context, code, source string) ([]byte, erro
 		return nil
 	})
 	if err != nil {
-		if putReplay != "" {
-			s.dropReplay(putReplay)
+		if putReplay != nil {
+			s.dropReplayIf(putID, putReplay)
 		}
 		return nil, err
 	}
@@ -330,12 +330,13 @@ func (s *Service) enrollRefused(ctx context.Context, source, jobID, reason strin
 	return result
 }
 
-func (s *Service) putReplay(enrID, jobID string, body []byte, now time.Time) {
+func (s *Service) putReplay(enrID, jobID string, body []byte, now time.Time) *replay {
 	s.replayMu.Lock()
 	defer s.replayMu.Unlock()
 	r := &replay{jobID: jobID, body: body, until: now.Add(s.enroll.ReplayWindow)}
-	r.timer = time.AfterFunc(s.enroll.ReplayWindow, func() { s.dropReplay(enrID) })
+	r.timer = time.AfterFunc(s.enroll.ReplayWindow, func() { s.dropReplayIf(enrID, r) })
 	s.replays[enrID] = r
+	return r
 }
 
 // takeReplay returns the first use's response for a retry, or why not.
@@ -356,10 +357,14 @@ func (s *Service) takeReplay(enrID string, now time.Time) ([]byte, int, string) 
 }
 
 // dropReplay forgets a response and wipes the token from memory.
-func (s *Service) dropReplay(enrID string) {
+func (s *Service) dropReplay(enrID string) { s.dropReplayIf(enrID, nil) }
+
+// dropReplayIf drops the entry only if it is still want (nil: any), so a
+// failed first use or a stale timer can't drop a newer entry.
+func (s *Service) dropReplayIf(enrID string, want *replay) {
 	s.replayMu.Lock()
 	defer s.replayMu.Unlock()
-	if r, ok := s.replays[enrID]; ok {
+	if r, ok := s.replays[enrID]; ok && (want == nil || r == want) {
 		r.timer.Stop()
 		clear(r.body)
 		delete(s.replays, enrID)
