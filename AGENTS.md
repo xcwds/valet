@@ -106,7 +106,12 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   `secrets`, `audit`, `jobs`, `policy`, `connector`, `connector/github`, `mcp`, `gitproxy`,
   `egress`, `approval`, …).
 - `deploy/`: Dockerfile, `compose.yaml` and the example agent devcontainer.
-- `e2e/`: the demo scenarios from the RFC, run against a fake upstream.
+- `e2e/`: the RFC's demo scenarios against a real valetd (in-process, temp data dir, generated
+  keys), a fake GitHub that records every call and enforces each token's grant like GitHub does,
+  an ntfy sink, and an MCP client holding only a session token. `Start(t)` wires it all; helpers
+  create jobs, call tools, read the audit trail and wait for alerts. Part of `go test ./...`; no
+  network. Add a milestone's scenario here as `<role>_test.go`. `e2e/live/` holds manual scripts
+  against a real App and sandbox repo (see its README); never run them in CI.
 - `docs/`: the RFC and operator guides.
 
 ## Tooling
