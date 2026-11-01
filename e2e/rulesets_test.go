@@ -102,9 +102,9 @@ func wellProtected(t *testing.T) fakeRepo {
 		"repos/xcwds/site/rules/branches/agent/valet-check": rulesOf(agent),
 		"repos/xcwds/site/contents/.github/CODEOWNERS":      map[string]any{"path": ".github/CODEOWNERS"},
 		"repos/xcwds/site/rulesets?includes_parents=true":   []any{protected, agent, tags},
-		"repos/xcwds/site/rulesets/1":                       protected,
-		"repos/xcwds/site/rulesets/2":                       agent,
-		"repos/xcwds/site/rulesets/3":                       tags,
+		"repos/xcwds/site/rulesets/1?includes_parents=true": protected,
+		"repos/xcwds/site/rulesets/2?includes_parents=true": agent,
+		"repos/xcwds/site/rulesets/3?includes_parents=true": tags,
 	}
 }
 
@@ -155,7 +155,7 @@ func TestCheckFindsGaps(t *testing.T) {
 		}, nil, "FAIL  agent/**: deletion allowed"},
 		"no CODEOWNERS": {func(r fakeRepo) { delete(r, "repos/xcwds/site/contents/.github/CODEOWNERS") }, nil, "FAIL  no CODEOWNERS file"},
 		"the App can bypass": {func(r fakeRepo) {
-			rs := r["repos/xcwds/site/rulesets/1"].(map[string]any)
+			rs := r["repos/xcwds/site/rulesets/1?includes_parents=true"].(map[string]any)
 			rs["bypass_actors"] = []any{map[string]any{"actor_id": 12345, "actor_type": "Integration", "bypass_mode": "always"}}
 		}, []string{"--app-id", "12345"}, `FAIL  ruleset "valet: protected branches": Valet's App (12345) can bypass it`},
 	}
@@ -171,7 +171,7 @@ func TestCheckFindsGaps(t *testing.T) {
 	}
 	// Without --app-id, any App on a bypass list is a warning.
 	repo := wellProtected(t)
-	repo["repos/xcwds/site/rulesets/2"].(map[string]any)["bypass_actors"] = []any{map[string]any{"actor_id": 9, "actor_type": "Integration"}}
+	repo["repos/xcwds/site/rulesets/2?includes_parents=true"].(map[string]any)["bypass_actors"] = []any{map[string]any{"actor_id": 9, "actor_type": "Integration"}}
 	if out, _, _ := runScript(t, "check.sh", repo, "xcwds/site"); !strings.Contains(out, `WARN  ruleset "valet: agent branches": a GitHub App can bypass it`) {
 		t.Errorf("no warning for an App bypass:\n%s", out)
 	}
@@ -191,5 +191,18 @@ func TestApplyCreatesThenUpdates(t *testing.T) {
 	if code != 0 || !strings.Contains(joined, "PUT repos/xcwds/site/rulesets/7") || !strings.Contains(joined, "PUT repos/xcwds/site/rulesets/8") ||
 		!strings.Contains(joined, "POST repos/xcwds/site/rulesets") {
 		t.Fatalf("update: exit %d, calls %v", code, calls)
+	}
+}
+
+// A malformed App ID must stop the check, not skip the bypass comparison.
+func TestCheckRefusesABadAppID(t *testing.T) {
+	repo := wellProtected(t)
+	rs := repo["repos/xcwds/site/rulesets/1?includes_parents=true"].(map[string]any)
+	rs["bypass_actors"] = []any{map[string]any{"actor_id": 12345, "actor_type": "Integration"}}
+	for _, bad := range []string{"valet-app", "", "12a", "-1"} {
+		out, _, code := runScript(t, "check.sh", repo, "xcwds/site", "--app-id", bad)
+		if code != 2 || !strings.Contains(out, "is not a GitHub App ID") {
+			t.Errorf("--app-id %q: exit %d\n%s", bad, code, out)
+		}
 	}
 }

@@ -13,6 +13,11 @@ set -uo pipefail
 repo=$1
 app_id=""
 [ "${2:-}" = --app-id ] && app_id=${3:-}
+if [ "${2:-}" = --app-id ] && ! [[ "$app_id" =~ ^[1-9][0-9]*$ ]]; then
+	# A bad ID would make every bypass comparison fail silently.
+	echo "--app-id: \"$app_id\" is not a GitHub App ID (a number, from the App's settings page)" >&2
+	exit 2
+fi
 gh=${GH:-gh}
 status=0
 ok() { echo "ok    $*"; }
@@ -54,7 +59,7 @@ done
 # GitHub App when its ID isn't given).
 tag_rulesets=0
 for id in $("$gh" api "repos/$repo/rulesets?includes_parents=true" --jq '.[] | select(.enforcement == "active") | .id'); do
-	rs=$("$gh" api "repos/$repo/rulesets/$id")
+	rs=$("$gh" api "repos/$repo/rulesets/$id?includes_parents=true")
 	name=$(jq -r .name <<<"$rs")
 	[ "$(jq -r .target <<<"$rs")" = tag ] && tag_rulesets=$((tag_rulesets + 1))
 	if ! jq -e 'has("bypass_actors")' <<<"$rs" >/dev/null; then
