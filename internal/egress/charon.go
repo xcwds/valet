@@ -76,13 +76,17 @@ type Charon struct {
 
 	mu      sync.Mutex
 	tunnels map[string]map[*tunnel]struct{} // by job
+	ended   map[string]time.Time            // revoked jobs, until they'd have expired anyway
+	closing bool
+	active  sync.WaitGroup // tunnels between register and unregister
 }
 
 // New returns Charon.
 func New(opts Options, auth Authenticator, alog *audit.Log, log *slog.Logger) *Charon {
 	c := &Charon{
 		allow: newAllowlist(opts.Allow), ports: opts.Ports, resolve: opts.Resolve, dial: opts.Dial,
-		auth: auth, audit: alog, log: logging.For(log, logging.Charon), tunnels: map[string]map[*tunnel]struct{}{},
+		auth: auth, audit: alog, log: logging.For(log, logging.Charon),
+		tunnels: map[string]map[*tunnel]struct{}{}, ended: map[string]time.Time{},
 	}
 	if c.resolve == nil {
 		c.resolve = func(ctx context.Context, host string) ([]netip.Addr, error) {
@@ -156,8 +160,17 @@ func (c *Charon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	t, ok := c.register(p.Job.ID)
-	if !ok {
+	t, why := c.register(p.Job.ID)
+	switch why {
+	case "":
+	case "ended":
+		// Revoked while this CONNECT was being checked.
+		challenge(w)
+		return
+	case "closing":
+		http.Error(w, "valet is shutting down", http.StatusServiceUnavailable)
+		return
+	default:
 		c.deny(w, r, p, ev, "egress/limit", fmt.Sprintf("more than %d open tunnels for this job", MaxTunnelsPerJob), http.StatusTooManyRequests)
 		return
 	}
@@ -215,14 +228,47 @@ func (c *Charon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	resultParams["bytes_up"], resultParams["bytes_down"] = up, down
 }
 
-// CloseJob closes every tunnel the job has open (on revoke).
+// CloseJob closes every tunnel the job has open and refuses it new ones
+// (on revoke), including a CONNECT already past authentication.
 func (c *Charon) CloseJob(jobID string) {
 	c.mu.Lock()
+	now := time.Now()
+	for id, until := range c.ended {
+		if now.After(until) {
+			delete(c.ended, id)
+		}
+	}
+	c.ended[jobID] = now.Add(jobs.MaxTTL) // outlives any token for the job
 	ts := c.tunnels[jobID]
 	delete(c.tunnels, jobID)
 	c.mu.Unlock()
 	for t := range ts {
 		t.close()
+	}
+}
+
+// Close closes every tunnel and waits (up to ctx) for each to record its
+// result. valetd calls it after the servers stop and before the store
+// closes: the HTTP server doesn't track hijacked connections.
+func (c *Charon) Close(ctx context.Context) {
+	c.mu.Lock()
+	c.closing = true
+	var all []*tunnel
+	for _, ts := range c.tunnels {
+		for t := range ts {
+			all = append(all, t)
+		}
+	}
+	c.mu.Unlock()
+	for _, t := range all {
+		t.close()
+	}
+	done := make(chan struct{})
+	go func() { c.active.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		c.log.Warn("tunnels still closing at shutdown")
 	}
 }
 
@@ -283,18 +329,26 @@ func (t *tunnel) close() {
 	}
 }
 
-func (c *Charon) register(jobID string) (*tunnel, bool) {
+// register adds a tunnel for the job, or says why not: "ended", "closing"
+// or "limit".
+func (c *Charon) register(jobID string) (*tunnel, string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.tunnels[jobID]) >= MaxTunnelsPerJob {
-		return nil, false
+	switch _, ended := c.ended[jobID]; {
+	case ended:
+		return nil, "ended"
+	case c.closing:
+		return nil, "closing"
+	case len(c.tunnels[jobID]) >= MaxTunnelsPerJob:
+		return nil, "limit"
 	}
 	if c.tunnels[jobID] == nil {
 		c.tunnels[jobID] = map[*tunnel]struct{}{}
 	}
 	t := &tunnel{}
 	c.tunnels[jobID][t] = struct{}{}
-	return t, true
+	c.active.Add(1)
+	return t, ""
 }
 
 func (c *Charon) unregister(jobID string, t *tunnel) {
@@ -304,6 +358,7 @@ func (c *Charon) unregister(jobID string, t *tunnel) {
 	if len(c.tunnels[jobID]) == 0 {
 		delete(c.tunnels, jobID)
 	}
+	c.active.Done()
 }
 
 // splice copies both ways until both sides are done, half-closing so each

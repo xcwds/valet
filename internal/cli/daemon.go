@@ -210,6 +210,11 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		// Charon authenticates from Proxy-Authorization itself.
 		Egress: charon,
 	})
+	// Open tunnels are hijacked connections the servers no longer track:
+	// close them and let each record its result before the store closes.
+	closeCtx, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	charon.Close(closeCtx)
+	cancelClose()
 	stopEvent := audit.Event{Interface: audit.InterfaceSystem, Action: "valetd.stop", Decision: audit.Info}
 	if runErr != nil {
 		stopEvent.Error = runErr.Error()

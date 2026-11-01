@@ -56,6 +56,8 @@ type env struct {
 	mu       sync.Mutex
 	dialed   []string
 	dns      map[string][]netip.Addr
+	// onResolve runs between authentication and the tunnel opening.
+	onResolve func(host string)
 }
 
 func newEnv(t *testing.T) *env {
@@ -106,6 +108,9 @@ func newEnv(t *testing.T) *env {
 		Allow: []string{"registry.npmjs.org", "*.pythonhosted.org", "echo.example.com"},
 		Ports: []int{443},
 		Resolve: func(_ context.Context, host string) ([]netip.Addr, error) {
+			if e.onResolve != nil {
+				e.onResolve(host)
+			}
 			if a, ok := e.dns[host]; ok {
 				return a, nil
 			}
@@ -459,5 +464,48 @@ func TestAllowlistAndTargets(t *testing.T) {
 		if _, _, err := splitTarget(bad); err == nil {
 			t.Errorf("splitTarget(%q) accepted", bad)
 		}
+	}
+}
+
+// A revoke landing after authentication but before the tunnel opens still
+// stops it.
+func TestRevokeDuringConnect(t *testing.T) {
+	e := newEnv(t)
+	j, tok := e.job()
+	e.onResolve = func(string) {
+		if err := e.jobs.Revoke(ctx, j.ID, "admin:test", "mid-connect"); err != nil {
+			t.Error(err)
+		}
+	}
+	if status, _, _ := e.connect("echo.example.com:443", basic(tok)); status != http.StatusProxyAuthRequired {
+		t.Errorf("status %d, want 407", status)
+	}
+	if len(e.dialed) != 0 {
+		t.Errorf("dialed for a revoked job: %v", e.dialed)
+	}
+}
+
+// Shutting down closes open tunnels and records each one's result.
+func TestCloseRecordsOpenTunnels(t *testing.T) {
+	e := newEnv(t)
+	j, tok := e.job()
+	status, c, br := e.connect("echo.example.com:443", basic(tok))
+	if status != 200 {
+		t.Fatalf("connect: %d", status)
+	}
+	_, _ = io.WriteString(c, "ping")
+	if _, err := io.ReadFull(br, make([]byte, 4)); err != nil {
+		t.Fatal(err)
+	}
+	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	e.charon.Close(cctx)
+	recs := e.trail(j.ID)
+	last := recs[len(recs)-1]
+	if last.Decision != audit.Info || !strings.Contains(string(last.Params), `"bytes_up":4`) || !strings.Contains(string(last.Params), `"bytes_down":4`) {
+		t.Errorf("result after Close = %+v %s", last, last.Params)
+	}
+	if status, _, _ := e.connect("echo.example.com:443", basic(tok)); status != http.StatusServiceUnavailable {
+		t.Errorf("after Close: %d, want 503", status)
 	}
 }
