@@ -40,3 +40,18 @@ For GitHub Enterprise Server, also set `VALET_LIVE_API_URL`.
 It prints the audit trail and exits non-zero if a step didn't go as expected. At the end it revokes
 the job, which revokes the installation token on GitHub; on exit it stops valetd and deletes
 everything it created locally.
+
+## no-creds.sh
+
+Run inside an agent container to check it holds no GitHub credential anywhere it can see: the
+environment (its own and every readable process's), git config, credential files, and files under
+the usual places, matched against GitHub's token formats. It prints where it found something, never
+the credential, and exits 1 if anything is found. Valet's own session token is expected and only
+reported. From the host:
+
+```sh
+docker exec -i -u vscode <container> bash -s < e2e/live/no-creds.sh
+```
+
+`deploy/smoke.sh` runs it inside the agent container in CI; the M2 demo
+([docs/demo-m2.md](../../docs/demo-m2.md)) runs it against the real thing.

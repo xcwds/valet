@@ -24,6 +24,12 @@ trap cleanup EXIT
 ./init.sh >/dev/null
 "${compose[@]}" up -d --no-build --wait --wait-timeout 60
 curl -fsS http://127.0.0.1:14400/healthz >/dev/null && ok "admin port answers on the host's loopback"
+# Outside agentnet, a session token has nothing to talk to (decision 11:
+# no IP binding, so this is the network's job).
+for port in 14401 14402; do
+	curl -sS --max-time 3 -o /dev/null "http://127.0.0.1:$port/" 2>/dev/null &&
+		bad "agent port $port is published on the host" || ok "agent port $port not published on the host"
+done
 
 docker build -q -t "$agent_image" devcontainer >/dev/null
 
@@ -33,6 +39,7 @@ sed -n 's/.*"code": *"\(vlt_enroll_[a-z0-9]*\)".*/\1/p' <<<"$out" >"$enroll/code
 chmod -R a+rwX "$enroll" # the agent user may differ from ours
 
 docker run --rm --network valet_agentnet -v "$enroll:/run/valet-enroll" \
+	-v "$PWD/../e2e/live/no-creds.sh:/usr/local/bin/no-creds:ro" \
 	-e VALET_URL=http://valet:14401 -e VALET_ENROLL_CODE_FILE=/run/valet-enroll/code \
 	-e SMOKE_OFFLINE="${SMOKE_OFFLINE:-}" --user vscode "$agent_image" bash -c '
 set -uo pipefail
@@ -44,6 +51,9 @@ valet-setup >/dev/null && ok "enrolled and configured" || { bad "valet-setup"; e
 [ ! -e /run/valet-enroll/code ] && ok "the enrollment code was deleted" || bad "the code is still there"
 grep -rqs "vlt_sess_" ~/.gitconfig && bad "the session token is in the git config" || ok "no token in the git config"
 . ~/.valet/env
+
+# No GitHub credential anywhere in the container (issue #22).
+out=$(bash /usr/local/bin/no-creds 2>&1) && ok "no GitHub credential in the container" || bad "GitHub credential in the container: $out"
 
 # No way out except Valet.
 env -u HTTPS_PROXY -u https_proxy curl -sS --max-time 5 -o /dev/null https://github.com 2>/dev/null \
