@@ -52,7 +52,10 @@ type Proxy struct {
 // New returns Ariadne.
 func New(reg *connector.Registry, pl Authorizer, log *slog.Logger) *Proxy {
 	return &Proxy{reg: reg, pl: pl, log: logging.For(log, logging.Ariadne), transport: &http.Transport{
-		Proxy:                 nil, // upstreams are reached directly, never via the egress proxy
+		// Like the connectors' API calls: an operator's outbound proxy, if
+		// valetd's environment sets one. (Charon is the agents' egress,
+		// never valetd's.)
+		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSHandshakeTimeout:   30 * time.Second,
 		ExpectContinueTimeout: time.Second,
@@ -277,8 +280,24 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, t target, allowe
 			http.Error(w, "valet: the upstream request failed", http.StatusBadGateway)
 		},
 	}
+	// Recorded however ServeHTTP ends: when copying the response fails
+	// mid-stream, ReverseProxy aborts with panic(http.ErrAbortHandler).
+	defer func() {
+		v := recover()
+		switch {
+		case upstreamErr != nil:
+		case r.Context().Err() != nil:
+			// The client went away: not a completed clone or push.
+			upstreamErr = fmt.Errorf("client disconnected: %w", r.Context().Err())
+		case v != nil:
+			upstreamErr = errors.New("transfer aborted mid-stream")
+		}
+		allowed.Done(status, upstreamErr)
+		if v != nil {
+			panic(v)
+		}
+	}()
 	rp.ServeHTTP(w, r)
-	allowed.Done(status, upstreamErr)
 }
 
 // refuse answers a denied or failed request. git shows a text/plain body

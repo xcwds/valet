@@ -599,3 +599,91 @@ func TestPushProbeIsAFetch(t *testing.T) {
 		t.Errorf("probe outside the job: %d", resp.StatusCode)
 	}
 }
+
+// A transfer the client abandons is not audited as completed.
+func TestAbortedTransferIsRecordedAsFailed(t *testing.T) {
+	e := newEnv(t)
+	j, tok := e.job("implementer", "xcwds/site")
+	released := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+		_, _ = io.WriteString(w, "001e# service=git-upload-pack\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done() // never finishes on its own
+		close(released)
+	}))
+	t.Cleanup(slow.Close)
+	e.forge.base = slow.URL
+
+	cctx, cancel := context.WithCancel(ctx)
+	req, _ := http.NewRequestWithContext(cctx, "GET", e.url("xcwds/site")+"/info/refs?service=git-upload-pack", nil)
+	req.SetBasicAuth("valet", tok)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadFull(resp.Body, make([]byte, 10)); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	_ = resp.Body.Close()
+	<-released
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		recs := e.audit(j.ID)
+		last := recs[len(recs)-1]
+		if last.Decision == audit.Info {
+			if last.UpstreamStatus != 200 || !strings.Contains(last.Error, "client disconnected") {
+				t.Errorf("result = %+v", last)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no result recorded: %+v", recs[len(recs)-2:])
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestUpstreamHonorsTheOperatorsProxy(t *testing.T) {
+	tr, ok := New(nil, nil, slog.New(slog.DiscardHandler)).transport.(*http.Transport)
+	if !ok || tr.Proxy == nil {
+		t.Fatal("the upstream transport ignores HTTPS_PROXY, unlike the connectors' API calls")
+	}
+}
+
+// An upstream that dies mid-response is recorded as failed, not as its
+// 200.
+func TestUpstreamDyingMidStreamIsRecorded(t *testing.T) {
+	e := newEnv(t)
+	j, tok := e.job("implementer", "xcwds/site")
+	dying := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		_, _ = io.WriteString(w, "001e# service=git-upload-pack\n")
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // drop the connection short of 1000 bytes
+	}))
+	t.Cleanup(dying.Close)
+	e.forge.base = dying.URL
+	req, _ := http.NewRequest("GET", e.url("xcwds/site")+"/info/refs?service=git-upload-pack", nil)
+	req.SetBasicAuth("valet", tok)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		recs := e.audit(j.ID)
+		if last := recs[len(recs)-1]; last.Decision == audit.Info {
+			if last.Error == "" {
+				t.Errorf("a broken transfer recorded as success: %+v", last)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no result recorded")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
