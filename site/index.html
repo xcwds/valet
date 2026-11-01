@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Valet: a credential broker for AI coding agents</title>
+  <meta name="description" content="Agents hold one per-job token; Valet mints narrow credentials, checks every action against policy and audits every decision.">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <a class="mark" href="./">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#2f5d50"/><circle cx="24" cy="32" r="10" fill="none" stroke="#fbfaf7" stroke-width="5"/><path d="M34 32h20M46 32v8M52 32v6" fill="none" stroke="#fbfaf7" stroke-width="5" stroke-linecap="round"/></svg>
+      <h1>Valet</h1>
+    </a>
+    <p class="tagline">A self-hosted credential broker for AI coding agents. Like a valet key: it starts the car, but won't open the trunk.</p>
+    <span class="status">Proof of concept, in progress</span>
+  </header>
+  <main>
+    <h2>What it does</h2>
+    <p>An agent holds one thing: a session token for its job. It reaches GitHub, git and package registries only through Valet, which</p>
+    <ul class="points">
+      <li><strong>mints narrow credentials</strong> per job, such as a GitHub token for one repository with only the permissions its role needs, and never hands them to the agent;</li>
+      <li><strong>checks every action against policy</strong>: a reviewer agent can comment but not approve or merge; an implementer can push only to its own branch;</li>
+      <li><strong>audits every decision</strong>, allowed or denied, in a tamper-evident log, and alerts you when something is refused.</li>
+    </ul>
+    <p>The agent's container has no route to the internet except through Valet, and nothing worth stealing inside it.</p>
+
+    <h2>Status</h2>
+    <p>Valet is being built in the open. GitHub over MCP, the git proxy, the egress allowlist and container enrollment work today; approvals, the admin UI and more connectors are next. Follow along on <a href="https://github.com/xcwds/valet">GitHub</a>.</p>
+
+    <h2>Read more</h2>
+    <ul class="points">
+      <li><a href="https://github.com/xcwds/valet/blob/main/docs/rfc/0001-design.md">The design (RFC 0001)</a></li>
+      <li><a href="https://github.com/xcwds/valet/blob/main/docs/deploy.md">Running it with Docker</a></li>
+      <li><a href="github-app/">The Valet GitHub App</a></li>
+    </ul>
+  </main>
+  <footer>
+    Valet is open source under the <a href="https://github.com/xcwds/valet/blob/main/LICENSE">Apache-2.0 license</a>. This site sets no cookies and loads nothing from anywhere else.
+  </footer>
+</body>
+</html>

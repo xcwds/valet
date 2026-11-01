@@ -8,7 +8,7 @@ Named after the valet key, which starts the car but won't open the trunk or glov
 
 > **Status:** proof of concept, early development: M0 is complete: `valet job create` issues a job and its session token, every action is audited, and agents' tokens are checked on the agent port, which has no endpoints yet. M1 is under way: the connector pipeline and the policy engine are in. The plan is the
 > [epic](https://github.com/xcwds/valet/issues/2); the design is
-> [RFC 0001](docs/rfc/0001-design.md).
+> [RFC 0001](docs/rfc/0001-design.md). Site: [valet.xcwds.com](https://valet.xcwds.com).
 
 ## How it works
 

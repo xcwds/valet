@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Valet GitHub App</title>
+  <meta name="description" content="What the Valet GitHub App can do, what it never can, and where your data goes.">
+  <link rel="icon" href="../icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <header>
+    <a class="mark" href="../">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#2f5d50"/><circle cx="24" cy="32" r="10" fill="none" stroke="#fbfaf7" stroke-width="5"/><path d="M34 32h20M46 32v8M52 32v6" fill="none" stroke="#fbfaf7" stroke-width="5" stroke-linecap="round"/></svg>
+      <h1>The Valet GitHub App</h1>
+    </a>
+    <p class="tagline">How Valet acts on GitHub for your agents, and the limits it works within.</p>
+  </header>
+  <main>
+    <h2>What it is</h2>
+    <p>Valet acts on GitHub as a GitHub App installed on the repositories agents may work in. For each job it asks GitHub for a short-lived installation token narrowed to that job's repositories and its role's permissions. The token stays inside Valet: agents never see it.</p>
+
+    <h2>Permissions</h2>
+    <table>
+      <tr><th>Permission</th><th>Level</th><th>Used for</th></tr>
+      <tr><td>Contents</td><td>Read &amp; write</td><td>Cloning, and pushing to an agent's own <code>agent/&lt;job&gt;/</code> branch</td></tr>
+      <tr><td>Pull requests</td><td>Read &amp; write</td><td>Reading, opening and commenting on pull requests</td></tr>
+      <tr><td>Issues</td><td>Read &amp; write</td><td>Reading and commenting on issues (triage)</td></tr>
+      <tr><td>Checks</td><td>Read</td><td>Reading CI results</td></tr>
+      <tr><td>Metadata</td><td>Read</td><td>Required by GitHub</td></tr>
+    </table>
+    <p>It never asks for Administration, and it is never on a ruleset's bypass list: GitHub's own branch protections still apply to everything it does, so a merge to a protected branch always needs a person's review.</p>
+
+    <h2>Your data</h2>
+    <p>Valet is self-hosted. It runs on your machine or server, keeps its audit log and secrets there, and talks only to GitHub and the other services you configure. It sends nothing to its authors: no telemetry, no analytics, no accounts.</p>
+
+    <h2>Setting it up</h2>
+    <p>Follow <a href="https://github.com/xcwds/valet/blob/main/docs/github-app.md">docs/github-app.md</a> to create and install the App, and <a href="https://github.com/xcwds/valet/blob/main/docs/github-rulesets.md">docs/github-rulesets.md</a> for the branch protections that back it up.</p>
+
+    <h2>Support</h2>
+    <p>Questions and problems: <a href="https://github.com/xcwds/valet/issues">github.com/xcwds/valet/issues</a>.</p>
+  </main>
+  <footer>
+    <a href="../">Valet</a> is open source under the <a href="https://github.com/xcwds/valet/blob/main/LICENSE">Apache-2.0 license</a>. This site sets no cookies and loads nothing from anywhere else.
+  </footer>
+</body>
+</html>

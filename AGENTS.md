@@ -148,6 +148,10 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   network. Add a milestone's scenario here as `<role>_test.go`. `e2e/live/` holds manual scripts
   against a real App and sandbox repo (see its README); never run them in CI.
 - `docs/`: the RFC and operator guides.
+- `site/`: valet.xcwds.com (GitHub Pages, `.github/workflows/site.yml` after CI passes on `main`):
+  plain HTML and CSS, no build step, no scripts or third-party requests (`e2e/site_test.go`
+  checks that and every local link). `site/github-app/` is the GitHub App's homepage; keep its
+  permissions table in step with `docs/github-app.md`.
 
 ## Tooling
 

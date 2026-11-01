@@ -1,0 +1,44 @@
+/* valet.xcwds.com: no scripts, fonts or third-party requests. */
+:root {
+  --bg: #fbfaf7;
+  --fg: #1d1c1a;
+  --muted: #5d5a54;
+  --accent: #2f5d50;
+  --rule: #e2ded6;
+  --code-bg: #f1eee8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161716;
+    --fg: #e8e6e1;
+    --muted: #a5a29b;
+    --accent: #8cc4b0;
+    --rule: #2c2e2c;
+    --code-bg: #222422;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main, header, footer { max-width: 44rem; margin: 0 auto; padding: 0 1.25rem; }
+header { padding-top: 3rem; }
+header .mark { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: inherit; }
+header svg { width: 2.5rem; height: 2.5rem; flex: none; }
+h1 { font-size: 2.2rem; line-height: 1.15; margin: 0; letter-spacing: -0.01em; }
+.tagline { font-size: 1.2rem; color: var(--muted); margin: 0.75rem 0 0; }
+h2 { font-size: 1.25rem; margin: 2.5rem 0 0.5rem; }
+a { color: var(--accent); }
+code { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 4px; }
+.status { display: inline-block; margin-top: 1.25rem; padding: 0.2rem 0.6rem; border: 1px solid var(--rule); border-radius: 999px; font-size: 0.85rem; color: var(--muted); }
+ul.points { padding-left: 1.1rem; }
+ul.points li { margin: 0.4rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+td:nth-child(2), th:nth-child(2) { white-space: nowrap; }
+th, td { text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+footer { margin-top: 3.5rem; padding-bottom: 3rem; border-top: 1px solid var(--rule); padding-top: 1rem; color: var(--muted); font-size: 0.9rem; }
+footer a { color: inherit; }
