@@ -3,8 +3,8 @@
 // valetd serves three ports (RFC Architecture): admin (operator API and UI),
 // agent (MCP and the git proxy) and egress (the registry proxy). Each is its
 // own http.Server, so deployment can bind admin to a network agents can't
-// reach. Until the components behind them land, the agent and egress ports
-// refuse every request, which is the deny-by-default answer.
+// reach. A port with no handler refuses every request, which is the
+// deny-by-default answer.
 package daemon
 
 import (
@@ -43,6 +43,9 @@ type Options struct {
 	// Agent serves the agent port. It must authenticate sessions itself;
 	// nil refuses every request.
 	Agent http.Handler
+	// Egress serves the egress port (CONNECT tunnels). It must
+	// authenticate sessions itself; nil refuses every request.
+	Egress http.Handler
 }
 
 type listener struct {
@@ -63,7 +66,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger, opts Options
 	}{
 		{"admin", cfg.Listen.Admin, adminServer(opts.Health, opts.Admin, log)},
 		{"agent", cfg.Listen.Agent, agentServer(opts.Agent)},
-		{"egress", cfg.Listen.Egress, egressServer()},
+		{"egress", cfg.Listen.Egress, egressServer(opts.Egress)},
 	}
 
 	// Requests get a base context that survives the stop signal, so the
@@ -185,11 +188,14 @@ func agentServer(h http.Handler) *http.Server {
 	}
 }
 
-// egressServer will be the registry CONNECT proxy (#18). Tunnels are long
-// lived hijacked connections, so only the header and idle timeouts apply.
-func egressServer() *http.Server {
+// egressServer serves Charon (#18). Tunnels are long-lived hijacked
+// connections, so only the header and idle timeouts apply.
+func egressServer(h http.Handler) *http.Server {
+	if h == nil {
+		h = refuse("egress is not enabled")
+	}
 	return &http.Server{
-		Handler:           refuse("egress is not enabled yet"),
+		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    64 << 10,

@@ -37,6 +37,19 @@ log:
 # docs/github-app.md. Without it, no connector is started.
 # connectors: /etc/valet/connectors.yaml # (VALET_CONNECTORS)
 
+# Egress (Charon, port 14402): HTTPS CONNECT tunnels for package managers.
+# Only these hosts (exact, or *.suffix for subdomains) on these ports; with
+# no list, every tunnel is denied. See docs/egress.md, including what a
+# tunnel can't enforce. (VALET_EGRESS_ALLOW, comma-separated)
+# egress:
+#   allow:
+#     - registry.npmjs.org
+#     - pypi.org
+#     - files.pythonhosted.org
+#     - proxy.golang.org
+#     - sum.golang.org
+#   ports: [443]
+
 # Alerts: where denials and rules marked `alert: true` are reported. Delivery
 # is asynchronous and never slows or changes a decision; at most 5 alerts per
 # job per 10 minutes, then one summary. Messages carry the job, role, action,

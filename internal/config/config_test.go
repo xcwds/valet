@@ -46,6 +46,7 @@ connectors: /etc/valet/connectors
 		Log:        Log{Level: "debug", Format: "text"},
 		Policies:   "/etc/valet/policies",
 		Connectors: "/etc/valet/connectors",
+		Egress:     Egress{Ports: []int{443}},
 	}
 	if !reflect.DeepEqual(*cfg, want) {
 		t.Fatalf("got %+v\nwant %+v", *cfg, want)
@@ -114,6 +115,25 @@ func TestAlertsConfig(t *testing.T) {
 	cfg, _ = Load("", envFrom(map[string]string{"VALET_DATA_DIR": "/d", "VALET_ALERTS_NTFY_URL": "https://ntfy.sh/x"}))
 	if cfg.Alerts.Ntfy == nil || cfg.Alerts.Ntfy.URL != "https://ntfy.sh/x" {
 		t.Errorf("env: %+v", cfg.Alerts)
+	}
+}
+
+func TestEgressConfig(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "data_dir: /d\negress:\n  allow: [registry.npmjs.org, '*.pythonhosted.org', proxy.golang.org]\n"), envFrom(nil))
+	if err != nil || len(cfg.Egress.Allow) != 3 || !reflect.DeepEqual(cfg.Egress.Ports, []int{443}) {
+		t.Fatalf("%+v %v", cfg.Egress, err)
+	}
+	for _, bad := range []string{"'*'", "'*.com.'", "Registry.NPMjs.org", "10.0.0.1", "'[::1]'", "npmjs.org:443", "'**.x.org'", "'x.*.org'", "localhost", "'-x.org'"} {
+		if _, err := Load(writeConfig(t, "data_dir: /d\negress: {allow: ["+bad+"]}\n"), envFrom(nil)); err == nil {
+			t.Errorf("egress.allow %s accepted", bad)
+		}
+	}
+	if _, err := Load(writeConfig(t, "data_dir: /d\negress: {ports: [0]}\n"), envFrom(nil)); err == nil {
+		t.Error("port 0 accepted")
+	}
+	cfg, _ = Load("", envFrom(map[string]string{"VALET_DATA_DIR": "/d", "VALET_EGRESS_ALLOW": "pypi.org, *.golang.org,"}))
+	if !reflect.DeepEqual(cfg.Egress.Allow, []string{"pypi.org", "*.golang.org"}) {
+		t.Errorf("env: %v", cfg.Egress.Allow)
 	}
 }
 

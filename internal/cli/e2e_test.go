@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ type liveValetd struct {
 	dataDir string
 	admin   string // http://host:port
 	agent   string
+	egress  string            // host:port
 	env     map[string]string // what the CLI on the same host would have
 	stop    func() int
 }
@@ -37,10 +39,10 @@ func startValetd(t *testing.T) *liveValetd {
 	for {
 		sc := bufio.NewScanner(strings.NewReader(stdout.String()))
 		for sc.Scan() {
-			var line struct{ Msg, Admin, Agent string }
+			var line struct{ Msg, Admin, Agent, Egress string }
 			if json.Unmarshal(sc.Bytes(), &line) == nil && line.Msg == "started" {
 				v := &liveValetd{
-					dataDir: dataDir, admin: "http://" + line.Admin, agent: "http://" + line.Agent,
+					dataDir: dataDir, admin: "http://" + line.Admin, agent: "http://" + line.Agent, egress: line.Egress,
 					env: map[string]string{"VALET_DATA_DIR": dataDir, "VALET_ADMIN_URL": "http://" + line.Admin},
 				}
 				stopped := false
@@ -325,5 +327,45 @@ func TestMCPThroughValetd(t *testing.T) {
 	// No connector offers it, so the record names the tool as called.
 	if !strings.Contains(out, `"action":"github_pr_merge"`) || !strings.Contains(out, `"interface":"mcp"`) {
 		t.Errorf("the call was not audited: %s", out)
+	}
+}
+
+// Charon answers on valetd's egress port: anonymous CONNECTs are
+// challenged, and with no allowlist configured a job's CONNECT is denied
+// and audited.
+func TestEgressThroughValetd(t *testing.T) {
+	v := startValetd(t)
+	_, out, _ := v.cli(t, "", "job", "create", "--role", "implementer", "--repo", "xcwds/site", "--json")
+	var created struct{ Token string }
+	_ = json.Unmarshal([]byte(out), &created)
+
+	connect := func(auth string) int {
+		t.Helper()
+		c, err := net.Dial("tcp", v.egress)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.Close()
+		req := "CONNECT registry.npmjs.org:443 HTTP/1.1\r\nHost: registry.npmjs.org:443\r\n"
+		if auth != "" {
+			req += "Proxy-Authorization: " + auth + "\r\n"
+		}
+		_, _ = io.WriteString(c, req+"\r\n")
+		resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: http.MethodConnect})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if s := connect(""); s != http.StatusProxyAuthRequired {
+		t.Errorf("anonymous: %d, want 407", s)
+	}
+	if s := connect("Bearer " + created.Token); s != http.StatusForbidden {
+		t.Errorf("no allowlist: %d, want 403", s)
+	}
+	_, out, _ = v.cli(t, "", "audit", "tail", "--decision", "deny")
+	if !strings.Contains(out, `"action":"egress.connect"`) || !strings.Contains(out, `"rule":"egress/allowlist"`) {
+		t.Errorf("the refused CONNECT was not audited: %s", out)
 	}
 }

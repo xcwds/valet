@@ -15,6 +15,7 @@ import (
 	"github.com/xcwds/valet/internal/connector"
 	"github.com/xcwds/valet/internal/connector/builtin"
 	"github.com/xcwds/valet/internal/daemon"
+	"github.com/xcwds/valet/internal/egress"
 	"github.com/xcwds/valet/internal/gitproxy"
 	"github.com/xcwds/valet/internal/jobs"
 	"github.com/xcwds/valet/internal/logging"
@@ -165,8 +166,12 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 	checkAlertSecrets(ctx, cfg.Alerts, secretStore, log)
 	alertsDone := make(chan struct{})
 	alertCtx, stopAlerts := context.WithCancel(context.WithoutCancel(ctx))
+	// Charon: CONNECT tunnels to allowlisted registries on the egress port.
+	charon := egress.New(egress.Options{Allow: cfg.Egress.Allow, Ports: cfg.Egress.Ports}, jobSvc, auditLog, log)
+	jobSvc.OnRevoke(func(_ context.Context, jobID string) { charon.CloseJob(jobID) })
 	if alerts != nil {
 		pl.SetAlerter(alerts)
+		charon.SetAlerter(alerts)
 		go func() { alerts.Run(alertCtx); close(alertsDone) }()
 	} else {
 		close(alertsDone)
@@ -202,7 +207,14 @@ func daemonCmd(ctx context.Context, name string, args []string, sys IO) int {
 		}),
 		// Every request on the agent port carries a session token.
 		Agent: jobSvc.RequireSession(agentMux),
+		// Charon authenticates from Proxy-Authorization itself.
+		Egress: charon,
 	})
+	// Open tunnels are hijacked connections the servers no longer track:
+	// close them and let each record its result before the store closes.
+	closeCtx, cancelClose := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	charon.Close(closeCtx)
+	cancelClose()
 	stopEvent := audit.Event{Interface: audit.InterfaceSystem, Action: "valetd.stop", Decision: audit.Info}
 	if runErr != nil {
 		stopEvent.Error = runErr.Error()

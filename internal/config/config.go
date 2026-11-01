@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 
 	"go.yaml.in/yaml/v3"
@@ -43,7 +44,22 @@ type Config struct {
 	Connectors string `yaml:"connectors"`
 	// Alerts configures where denials are reported (#15).
 	Alerts Alerts `yaml:"alerts"`
+	// Egress configures Charon, the registry egress proxy (#18).
+	Egress Egress `yaml:"egress"`
 }
+
+// Egress says where agents may open tunnels. Empty Allow denies every
+// CONNECT (RFC decision 5).
+type Egress struct {
+	// Allow lists host names (registry.npmjs.org) and suffix patterns
+	// (*.pythonhosted.org, which matches subdomains only).
+	Allow []string `yaml:"allow"`
+	// Ports agents may CONNECT to. Default [443].
+	Ports []int `yaml:"ports"`
+}
+
+// egressPattern is a lowercase DNS name, optionally behind "*.".
+var egressPattern = regexp.MustCompile(`^(\*\.)?([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$`)
 
 // Alerts says where to send alerts and which decisions alert.
 type Alerts struct {
@@ -107,6 +123,7 @@ var envOverrides = []struct {
 	{"VALET_LOG_FORMAT", func(c *Config, v string) { c.Log.Format = v }},
 	{"VALET_POLICIES", func(c *Config, v string) { c.Policies = v }},
 	{"VALET_CONNECTORS", func(c *Config, v string) { c.Connectors = v }},
+	{"VALET_EGRESS_ALLOW", func(c *Config, v string) { c.Egress.Allow = splitList(v) }},
 	{"VALET_ALERTS_NTFY_URL", func(c *Config, v string) {
 		if c.Alerts.Ntfy == nil {
 			c.Alerts.Ntfy = &Notifier{}
@@ -182,6 +199,20 @@ func (c *Config) setDefaults() {
 	if c.Log.Format == "" {
 		c.Log.Format = "json"
 	}
+	if len(c.Egress.Ports) == 0 {
+		c.Egress.Ports = []int{443}
+	}
+}
+
+// splitList splits a comma-separated environment value.
+func splitList(v string) []string {
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // Validate reports every problem with the config at once.
@@ -223,6 +254,16 @@ func (c *Config) Validate() error {
 	for name, n := range map[string]*Notifier{"alerts.ntfy": c.Alerts.Ntfy, "alerts.webhook": c.Alerts.Webhook} {
 		if n != nil && n.URL == "" {
 			errs = append(errs, fmt.Errorf("%s.url is required", name))
+		}
+	}
+	for _, h := range c.Egress.Allow {
+		if !egressPattern.MatchString(h) {
+			errs = append(errs, fmt.Errorf("egress.allow: %q must be a lowercase host name or *.suffix (no IP addresses, ports or bare *)", h))
+		}
+	}
+	for _, p := range c.Egress.Ports {
+		if p < 1 || p > 65535 {
+			errs = append(errs, fmt.Errorf("egress.ports: %d is not a port", p))
 		}
 	}
 	if c.Log.Format != "json" && c.Log.Format != "text" {
