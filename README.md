@@ -44,7 +44,8 @@ The CLI is `valet` and the daemon `valetd`.
 
 [docs/deploy.md](docs/deploy.md) runs Valet with Docker Compose and an agent devcontainer that has
 no route out but through Valet. Operator guides: [GitHub App](docs/github-app.md),
-[enrollment](docs/enrollment.md), [MCP](docs/mcp.md), [git](docs/git.md), [egress](docs/egress.md).
+[rulesets](docs/github-rulesets.md), [enrollment](docs/enrollment.md), [MCP](docs/mcp.md),
+[git](docs/git.md), [egress](docs/egress.md).
 
 ## Milestones
 

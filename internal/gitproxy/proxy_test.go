@@ -269,6 +269,25 @@ func (e *env) audit(jobID string) []audit.Record {
 	return recs
 }
 
+// waitRecord waits up to 5 s for the job's first audit record matching
+// match: results are written when a transfer ends, which may be just
+// after the client has its response.
+func (e *env) waitRecord(jobID string, match func(audit.Record) bool) audit.Record {
+	e.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		for _, r := range e.audit(jobID) {
+			if match(r) {
+				return r
+			}
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("no matching audit record for %s: %+v", jobID, e.audit(jobID))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // clone clones repo for the job and returns the work tree.
 func (e *env) clone(token, repo string) string {
 	e.t.Helper()
@@ -543,9 +562,11 @@ func TestUpstreamRefusingTheCredentialIsNot401(t *testing.T) {
 	if resp.StatusCode != http.StatusBadGateway || resp.Header.Get("WWW-Authenticate") != "" {
 		t.Errorf("%d %v", resp.StatusCode, resp.Header)
 	}
-	recs := e.audit(j.ID)
-	if last := recs[len(recs)-1]; last.Decision != audit.Info || last.UpstreamStatus != 401 || last.Error == "" {
-		t.Errorf("result = %+v", last)
+	// The result is recorded once the transfer ends, which can be just
+	// after the client has its response.
+	res := e.waitRecord(j.ID, func(r audit.Record) bool { return r.Decision == audit.Info })
+	if res.UpstreamStatus != 401 || res.Error == "" {
+		t.Errorf("result = %+v", res)
 	}
 }
 
@@ -590,10 +611,11 @@ func TestPushProbeIsAFetch(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("probe: %d", resp.StatusCode)
 	}
-	recs := e.audit(j.ID)
-	if d := recs[len(recs)-2]; d.Action != "git.fetch" || d.Decision != audit.Allow {
+	d := e.waitRecord(j.ID, func(r audit.Record) bool { return r.Interface == audit.InterfaceGit && r.Decision != audit.Info })
+	if d.Action != "git.fetch" || d.Decision != audit.Allow {
 		t.Errorf("probe decision = %+v", d)
 	}
+	e.waitRecord(j.ID, func(r audit.Record) bool { return r.Action == "git.fetch" && r.Decision == audit.Info })
 	// The same probe for a repo outside the job is denied.
 	if resp, _ := post(t, e, tok, "/git/forge/xcwds/other.git/git-receive-pack", []byte("0000"), false); resp.StatusCode != http.StatusForbidden {
 		t.Errorf("probe outside the job: %d", resp.StatusCode)
