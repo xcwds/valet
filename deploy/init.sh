@@ -15,7 +15,14 @@ if [ ! -f secrets/master.key ]; then
 fi
 chmod 0600 secrets/master.key
 
+# Valet never runs as root: run as root yourself, and the files go to the
+# image's nonroot user (65532) instead.
+uid=$(id -u) gid=$(id -g)
+if [ "$uid" = 0 ]; then
+	uid=65532 gid=65532
+	chown -R "$uid:$gid" data secrets
+fi
 if [ ! -f .env ]; then
-	printf 'VALET_UID=%s\nVALET_GID=%s\n' "$(id -u)" "$(id -g)" >.env
+	printf 'VALET_UID=%s\nVALET_GID=%s\n' "$uid" "$gid" >.env
 fi
 echo "Ready: docker compose -f deploy/compose.yaml up -d"

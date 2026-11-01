@@ -13,7 +13,10 @@ port is reachable from your machine only, never from the agents' network.
 
 ## Local Docker, end to end
 
-Everything is in `deploy/`.
+Everything is in `deploy/`. It needs Docker Engine 28 or later and Compose 2.33 or later, for
+`gw_priority`: with older versions the published admin port can land on the agentnet address,
+where the admin port doesn't listen, so `curl http://127.0.0.1:14400/healthz` fails (closed, not
+open).
 
 **1. Prepare** (once):
 
@@ -22,8 +25,9 @@ deploy/init.sh
 ```
 
 This creates `deploy/data/` (0700) and a master key at `deploy/secrets/master.key` (0600), both
-owned by you, and writes your uid to `deploy/.env`: valetd runs as you, never root, so the key
-needn't be readable by anyone else. **Back up the master key**: without it, stored secrets can't be
+owned by you, and writes your uid to `deploy/.env`: valetd runs as you, so the key needn't be
+readable by anyone else. Run as root, it gives both to the image's nonroot user (65532) instead:
+valetd never runs as root. **Back up the master key**: without it, stored secrets can't be
 decrypted. None of these files is ever committed (`deploy/.gitignore`).
 
 **2. Configure.** `deploy/valet.yaml` holds the egress allowlist (npm, PyPI, Go modules, and
@@ -69,6 +73,11 @@ minutes. At start, `valet-setup`:
 - writes `~/.valet/env` with `HTTPS_PROXY=http://agent:<token>@valet:14402`, loaded by every bash
   ([egress.md](egress.md));
 - registers Valet as Claude Code's MCP server ([mcp.md](mcp.md)).
+
+The container has no route out, so **VS Code's server and extensions can't be downloaded from
+inside it**: let VS Code download them on the host and copy them in (the Dev Containers
+extension's local-download settings), or bake them into the image, rather than adding their hosts
+to Charon's allowlist.
 
 The container has no GitHub credential at any point. Claude Code reaches `api.anthropic.com`
 through Charon with its own credential, as the RFC allows for the PoC.
