@@ -41,6 +41,28 @@ type Config struct {
 	Policies string `yaml:"policies"`
 	// Connectors is the path to the connector configuration (#10).
 	Connectors string `yaml:"connectors"`
+	// Alerts configures where denials are reported (#15).
+	Alerts Alerts `yaml:"alerts"`
+}
+
+// Alerts says where to send alerts and which decisions alert.
+type Alerts struct {
+	// OnDeny is "all" (every deny alerts; the default) or
+	// "alert_rules_only" (only rules marked alert: true).
+	OnDeny string `yaml:"on_deny"`
+	// UIURL is the admin UI's base URL, for links in alerts. Optional.
+	UIURL string `yaml:"ui_url"`
+	// Ntfy publishes to an ntfy topic.
+	Ntfy *Notifier `yaml:"ntfy"`
+	// Webhook POSTs each alert as JSON.
+	Webhook *Notifier `yaml:"webhook"`
+}
+
+// Notifier is one alert destination.
+type Notifier struct {
+	URL string `yaml:"url"`
+	// TokenSecret names a secret store entry sent as a Bearer token.
+	TokenSecret string `yaml:"token_secret"`
 }
 
 // Listen holds the listener addresses.
@@ -85,6 +107,12 @@ var envOverrides = []struct {
 	{"VALET_LOG_FORMAT", func(c *Config, v string) { c.Log.Format = v }},
 	{"VALET_POLICIES", func(c *Config, v string) { c.Policies = v }},
 	{"VALET_CONNECTORS", func(c *Config, v string) { c.Connectors = v }},
+	{"VALET_ALERTS_NTFY_URL", func(c *Config, v string) {
+		if c.Alerts.Ntfy == nil {
+			c.Alerts.Ntfy = &Notifier{}
+		}
+		c.Alerts.Ntfy.URL = v
+	}},
 }
 
 // EnvNames lists the environment variables Load reads, for help text.
@@ -186,6 +214,16 @@ func (c *Config) Validate() error {
 	}
 	if _, err := ParseLevel(c.Log.Level); err != nil {
 		errs = append(errs, err)
+	}
+	switch c.Alerts.OnDeny {
+	case "", "all", "alert_rules_only":
+	default:
+		errs = append(errs, fmt.Errorf("alerts.on_deny: %q must be all or alert_rules_only", c.Alerts.OnDeny))
+	}
+	for name, n := range map[string]*Notifier{"alerts.ntfy": c.Alerts.Ntfy, "alerts.webhook": c.Alerts.Webhook} {
+		if n != nil && n.URL == "" {
+			errs = append(errs, fmt.Errorf("%s.url is required", name))
+		}
 	}
 	if c.Log.Format != "json" && c.Log.Format != "text" {
 		errs = append(errs, fmt.Errorf("log.format: %q must be json or text", c.Log.Format))

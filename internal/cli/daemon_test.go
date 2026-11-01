@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xcwds/valet/internal/config"
 	"github.com/xcwds/valet/internal/secrets"
 )
 
@@ -270,5 +272,23 @@ func TestValetdUnsetsTheKeyVariable(t *testing.T) {
 	<-done
 	if len(unset) != 1 || unset[0] != secrets.DefaultKeyEnv {
 		t.Fatalf("unset = %v, want [%s]", unset, secrets.DefaultKeyEnv)
+	}
+}
+
+type noSecrets struct{}
+
+func (noSecrets) Get(context.Context, string) (secrets.Secret, error) {
+	return secrets.Secret{}, secrets.ErrNotFound
+}
+
+func TestMissingAlertTokenWarnsAtStart(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	checkAlertSecrets(context.Background(), config.Alerts{
+		Ntfy:    &config.Notifier{URL: "https://ntfy.example/t", TokenSecret: "ntfy/token"},
+		Webhook: &config.Notifier{URL: "https://hooks.example/v"},
+	}, noSecrets{}, log)
+	if out := buf.String(); !strings.Contains(out, "alert token secret unreadable") || !strings.Contains(out, "alerts.ntfy") || strings.Contains(out, "alerts.webhook") {
+		t.Errorf("log = %s", out)
 	}
 }

@@ -92,6 +92,12 @@ this page and a repo file disagree, the repo file wins. Fix this page when you n
   compiled and type-checked at load (`cel.dev/cel-go`; `job` and `action` are typed, `params` is
   dynamic), first match wins, no match or any evaluation error denies, cost limit and timeout per
   condition. Implements `pipeline.Policy`; `jobs.Service.RequireRoles` refuses undefined roles.
+- `internal/alert`: denials and `alert: true` rules reach the operator (ntfy, or a JSON webhook),
+  configured under `alerts:`. The pipeline calls `Send` after the decision is audited; `Send`
+  never blocks (a bounded queue drops and counts when full), a worker retries with backoff, and
+  each job gets at most `PerJob` alerts a window, then one summary. Alerts carry the audit
+  record's already-redacted params, never the request's. Delivery drains for a few seconds at
+  shutdown.
 - `internal/logging`: `slog` JSON or text; `logging.For(log, logging.Themis)` adds the component,
   shown as a `[themis]` prefix in text mode.
 - `internal/version`: the build's version, set with

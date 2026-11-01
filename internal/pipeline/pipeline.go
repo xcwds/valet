@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"regexp"
 
+	"github.com/xcwds/valet/internal/alert"
 	"github.com/xcwds/valet/internal/audit"
 	"github.com/xcwds/valet/internal/connector"
 	"github.com/xcwds/valet/internal/jobs"
@@ -79,6 +80,12 @@ func (d *Denied) Error() string {
 	return fmt.Sprintf("denied by rule %s: %s", d.Rule, d.Reason)
 }
 
+// Alerter receives decisions worth telling the operator about (#15). Send
+// must not block.
+type Alerter interface {
+	Send(a alert.Alert)
+}
+
 // Pipeline runs requests.
 type Pipeline struct {
 	reg    *connector.Registry
@@ -86,7 +93,12 @@ type Pipeline struct {
 	audit  *audit.Log
 	cache  *connector.Cache
 	log    *slog.Logger
+	alerts Alerter
 }
+
+// SetAlerter sends denies and alert-rule decisions to a. Set it before
+// serving requests.
+func (pl *Pipeline) SetAlerter(a Alerter) { pl.alerts = a }
 
 // New returns a Pipeline.
 func New(reg *connector.Registry, policy Policy, log *audit.Log, cache *connector.Cache, logger *slog.Logger) *Pipeline {
@@ -114,29 +126,35 @@ func (pl *Pipeline) Run(ctx context.Context, p jobs.Principal, iface, action str
 		if !actionNameOK(action) {
 			ev.Action, ev.Params = "invalid", map[string]any{"requested": truncate(action, 128)}
 		}
-		return connector.Result{}, pl.denyAs(ctx, ev, "", reason, recorded)
+		return connector.Result{}, pl.denyAs(ctx, ev, p.Job.Role, "", reason, recorded, false)
 	}
 	ev.Params, ev.Sensitive = params, spec.Sensitive
 
 	dec, err := pl.policy.Decide(ctx, Request{Job: p.Job, Interface: iface, Action: action, Spec: spec, Params: params})
+	role := p.Job.Role
 	if err != nil {
-		return connector.Result{}, pl.deny(ctx, ev, "policy-error", "policy evaluation failed: "+err.Error())
+		return connector.Result{}, pl.denyAs(ctx, ev, role, "policy-error", "policy evaluation failed: "+err.Error(), "policy evaluation failed: "+err.Error(), false)
 	}
 	switch dec.Effect {
 	case Allow:
 	case RequireApproval:
 		// Approvals arrive with #23; until then a parked request fails closed.
-		return connector.Result{}, pl.deny(ctx, ev, dec.Rule, "needs approval, and approvals are not available yet")
+		msg := "needs approval, and approvals are not available yet"
+		return connector.Result{}, pl.denyAs(ctx, ev, role, dec.Rule, msg, msg, dec.Alert)
 	case Deny:
-		return connector.Result{}, pl.deny(ctx, ev, dec.Rule, dec.Reason)
+		return connector.Result{}, pl.denyAs(ctx, ev, role, dec.Rule, dec.Reason, dec.Reason, dec.Alert)
 	default:
-		return connector.Result{}, pl.deny(ctx, ev, dec.Rule, fmt.Sprintf("unknown policy effect %q", dec.Effect))
+		msg := fmt.Sprintf("unknown policy effect %q", dec.Effect)
+		return connector.Result{}, pl.denyAs(ctx, ev, role, dec.Rule, msg, msg, dec.Alert)
 	}
 
 	ev.Decision, ev.Rule = audit.Allow, dec.Rule
 	decided, err := pl.audit.Append(ctx, ev)
 	if err != nil {
 		return connector.Result{}, fmt.Errorf("not recorded, so not done: %w", err)
+	}
+	if dec.Alert {
+		pl.alert(decided, role, dec.Reason, true)
 	}
 
 	result := audit.Event{
@@ -159,20 +177,29 @@ func (pl *Pipeline) Run(ctx context.Context, p jobs.Principal, iface, action str
 	return res, err
 }
 
-// deny records a refusal and returns it. If the refusal can't be recorded,
-// the request still fails, with the audit error.
-func (pl *Pipeline) deny(ctx context.Context, ev audit.Event, rule, reason string) error {
-	return pl.denyAs(ctx, ev, rule, reason, reason)
-}
-
-// denyAs is deny with a different reason for the audit log than for the
-// agent.
-func (pl *Pipeline) denyAs(ctx context.Context, ev audit.Event, rule, reason, recorded string) error {
+// denyAs records a refusal, offers it to the alerter and returns it, with
+// reason for the agent and recorded for the audit log (and the alert). If the
+// refusal can't be recorded, the request still fails, with the audit error.
+func (pl *Pipeline) denyAs(ctx context.Context, ev audit.Event, role, rule, reason, recorded string, ruleAlert bool) error {
 	ev.Decision, ev.Rule, ev.Error = audit.Deny, rule, recorded
-	if _, err := pl.audit.Append(ctx, ev); err != nil {
+	rec, err := pl.audit.Append(ctx, ev)
+	if err != nil {
 		return errors.Join(&Denied{Rule: rule, Reason: reason}, err)
 	}
+	pl.alert(rec, role, recorded, ruleAlert)
 	return &Denied{Rule: rule, Reason: reason}
+}
+
+// alert hands an audited decision to the alerter. It uses the audit
+// record's params, which are already redacted and truncated.
+func (pl *Pipeline) alert(rec audit.Record, role, reason string, ruleAlert bool) {
+	if pl.alerts == nil {
+		return
+	}
+	pl.alerts.Send(alert.Alert{
+		JobID: rec.JobID, Role: role, Action: rec.Action, Decision: rec.Decision, Rule: rec.Rule,
+		Reason: reason, Params: rec.Params, AuditSeq: rec.Seq, RuleAlert: ruleAlert,
+	})
 }
 
 // record writes a result event. The action already happened, so a failure
